@@ -3,10 +3,11 @@ require('dotenv').config(); // only needed for local development
 const { Client, RichEmbed } = require('discord.js');
 const client = new Client();
 
+const token = process.env.DISCORD_BOT_TOKEN;
 const COMMAND_PREFIX = '!rb';
 
 // Bot login
-// Find your token under Bot, Token at https://discordapp.com/developers/applications/me
+// Find your token under Bot, Token. https://discordapp.com/developers/applications/me
 // WARNING: Do not commit your token to git! Use an environment variable instead!
 if (!token) {
     console.error('DISCORD_BOT_TOKEN is not defined!');
