@@ -1,11 +1,22 @@
-require('dotenv').config();
+require('dotenv').config(); // only needed for local development
 
-// https://discord.js.org/#/docs/main/stable/general/welcome
 const { Client, RichEmbed } = require('discord.js');
 const client = new Client();
 
 const COMMAND_PREFIX = '!rb';
 
+// Bot login
+// Find your token under Bot, Token at https://discordapp.com/developers/applications/me
+// WARNING: Do not commit your token to git! Use an environment variable instead!
+if (!token) {
+    console.error('DISCORD_BOT_TOKEN is not defined!');
+    process.exit(1);
+} else {
+    console.log('Token loaded from environment variable');
+    client.login(token);
+}
+
+// https://discord.js.org/#/docs/main/stable/general/welcome
 client.on('ready', () => {
   console.log('I am ready!');
 
@@ -79,8 +90,3 @@ client.on('message', message => {
         });
     }
 });
-
-// Bot login
-// Find your token at https://discordapp.com/developers/applications/me
-// WARNING: Do not commit your token to git! Use an environment variable instead!
-client.login(process.env.DISCORD_BOT_TOKEN);
