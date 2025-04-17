@@ -1,8 +1,3 @@
-# fly.toml app configuration file generated for rolybot on 2025-04-17T00:53:50Z
-#
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
-#
-
 app = 'rolybot'
 primary_region = 'ord'
 
@@ -17,7 +12,6 @@ primary_region = 'ord'
   processes = ['app']
 
 [[vm]]
-  memory = '1gb'
+  memory = '128mb'
   cpu_kind = 'shared'
   cpus = 1
-  memory_mb = 1024
