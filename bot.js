@@ -8,6 +8,16 @@ const COMMAND_PREFIX = '!rb';
 
 client.on('ready', () => {
   console.log('I am ready!');
+
+  client.user.setPresence({
+    /*
+    activity: {
+        name: 'Minecraft',
+        type: 'PLAYING'  // WATCHING, LISTENING, STREAMING
+    },
+    */
+    status: 'online'  // online, idle, dnd (do not disturb), invisible
+  });
 });
 
 client.on('message', message => {
