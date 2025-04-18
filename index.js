@@ -42,7 +42,7 @@ const openai = new OpenAI({
 
 // Bot Knowledge
 const conversationMemory = new Map();
-const MAX_HISTORY = 20;
+const MAX_HISTORY = 1;
 let lastUsage = null;
 
 // Bot Commands
@@ -329,8 +329,8 @@ async function generateRolybotResponse(message) {
     const start = performance.now();
     try {
         const response = await openai.chat.completions.create({
-            model: 'gpt-4o-mini-2024-07-18',
-            //model: 'ft:gpt-4o-mini-2024-07-18:personal:rolybot:BNcQZliV',
+            //model: 'gpt-4o-mini-2024-07-18',
+            model: 'ft:gpt-4o-mini-2024-07-18:personal:rolybot:BNe8pbBT',
             messages: [
                 { role: 'system', content: 
                     `You are RolyBot, a Discord bot that pretends to be RolyBug aka jbax1899 aka Jordan, whom you were trained off of.
