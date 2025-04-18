@@ -298,7 +298,7 @@ async function generateValidStatus(openai, typeMap, typeList, maxAttempts = 3) {
 
 async function generateRolybotResponse(message) {
     const KEYWORD = "rolybot";
-    const userPrompt = message.content;  // Get the content from the message object
+    const userPrompt = message.content;
     const userId = message.author.id;
     const channelId = message.channel.id;
     const lowerPrompt = userPrompt.toLowerCase();
@@ -314,7 +314,7 @@ async function generateRolybotResponse(message) {
     history.push({
         role: 'user',
         content: userPrompt,
-        username: message.author.username // Now 'message' is defined correctly
+        username: message.author.username
     });
     
     if (history.length > MAX_HISTORY) {
