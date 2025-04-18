@@ -83,7 +83,8 @@ const commands = {
                 });
             
                 console.log(`Status updated to: "${typeWord} ${activity}"`);
-                message.channel.send(`✅ Status updated to: **${typeWord} ${activity}**`);
+                if (message)
+                    message.channel.send(`✅ Status updated to: **${typeWord} ${activity}**`);
             
                 const usage = response.usage;
                 if (usage) {
@@ -104,7 +105,8 @@ const commands = {
                 }
             } catch (error) {
                 console.error('Error setting status:', error);
-                message.channel.send('⚠️ An error occurred while updating the status.');
+                if (message)
+                    message.channel.send('⚠️ An error occurred while updating the status.');
             }            
         }
     },
@@ -158,6 +160,7 @@ if (!token) {
 }
 
 client.once('ready', async () => {
+    client.user.setPresence({ status: 'online' });
     console.log('Bot is online!');
     
     // Loop through all guilds the bot is a part of
@@ -191,8 +194,13 @@ client.once('ready', async () => {
         }
     });
 
-    client.user.setPresence({ status: 'online' });
-    console.log('Bot is online!');
+    // Set a random status
+    commands.status.execute();
+
+    // Set random status every 60 minutes
+    setInterval(() => {
+        commands.status.execute().catch(err => console.error('Error in status update interval:', err));
+    }, 60 * 60 * 1000);
 });
 
 // Listens for commands
