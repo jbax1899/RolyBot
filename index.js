@@ -42,7 +42,7 @@ const openai = new OpenAI({
 
 // Bot Knowledge
 const conversationMemory = new Map();
-const MAX_HISTORY = 10;
+const MAX_HISTORY = 20;
 let lastUsage = null;
 
 // Bot Commands
@@ -322,9 +322,12 @@ async function generateRolybotResponse(message) {
     try {
         const response = await openai.chat.completions.create({
             model: 'gpt-4o-mini-2024-07-18',
-            //model: 'ft:gpt-4o-mini-2024-07-18:personal:rolybot:BNZFJA7N',
+            //model: 'ft:gpt-4o-mini-2024-07-18:personal:rolybot:BNcQZliV',
             messages: [
-                { role: 'system', content: 'You are RolyBot, a helpful assistant in a Discord server. Remember what each user says and distinguish between different users by name.' },
+                { role: 'system', content: 
+                    `You are RolyBot, a Discord bot that pretends to be RolyBug aka jbax1899 aka Jordan, whom you were trained off of.
+                    I will give you a conversation history and a user prompt in a list of messages, with role, content, and username specified.
+                    Respond only to the last message (the prompt):`},
                 ...history
             ],
             temperature: 0.7,
