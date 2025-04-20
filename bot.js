@@ -43,7 +43,7 @@ const openai = new OpenAI({
 
 // Bot Knowledge
 const conversationMemory = new Map();
-const MAX_HISTORY = 5;
+const MAX_HISTORY = 20;
 let lastUsage = null;
 
 // Bot Commands
@@ -304,6 +304,8 @@ async function generateRolybotResponse(message) {
     const channelId = message.channel.id;
     const lowerPrompt = userPrompt.toLowerCase();
 
+    
+
     console.log(`[RolyBot] Message from ${userId} in ${channelId}: "${userPrompt}"`);
     const memoryKey = `${channelId}:${userId}`;
 
@@ -322,7 +324,10 @@ async function generateRolybotResponse(message) {
         history.splice(0, history.length - MAX_HISTORY);
     }
 
-    // No keyword, exit early
+    console.log(history);
+
+    // If we aren't just saving posts, but doing something with a keyword, continue.
+    // If no keyword, exit early
     if (!lowerPrompt.includes(KEYWORD)) return null;
 
     // Convert message history to a single conversation string
@@ -334,7 +339,7 @@ async function generateRolybotResponse(message) {
         }
     }).join('\n');
 
-    console.log(formattedHistory);
+    console.log("Formatted History:\n" + formattedHistory);
 
     let extraContext = '';
 
@@ -378,31 +383,41 @@ async function generateRolybotResponse(message) {
                     .filter(line => line.length > 0)
                     .join(" ");
 
-                extraContext += `\nProfile of ${username}: [${personalityOneLine}]`;
+                extraContext += `\nDetails about the user ${username}: [${personalityOneLine}]\n`;
             }
         }
     
         // Log extraContext after processing
-        console.log("Extra Context:", extraContext);
+        //console.log("Extra Context:", extraContext);
     } catch (err) {
         console.error('[RolyBot] Error loading aliases or user data:', err);
     }
 
     const start = performance.now();
+    const prompt = {
+        role: 'system',
+        content: `
+            You are RolyBot, a Discord bot who responds like RolyBug (aka jbax1899 or Jordan). 
+            You are chatting casually and informally in a server, participating in conversations just like any other user.
+            You will be given a transcript of the conversation so far. 
+            Pay attention to the full conversation, not just the last message. 
+            You may respond to multiple points if relevant, and continue the tone of the conversation.
+            Write a very long response (Avoid one-liners unless it fits the moment). 
+            Do not include links or assistant-like language. 
+            Stay in-character as RolyBug.
+            ${extraContext}
+            Begin chatlog history (reply to the last one):
+        `.trim()
+    };
+    console.log("Prompt: " + prompt.content + "\n" + formattedHistory);
+
     try {
         const response = await openai.chat.completions.create({
             //model: 'ft:gpt-4o-mini-2024-07-18:personal:rolybot:BOFzPaB6',
-            model: 'ft:gpt-4o-mini-2024-07-18:personal:rolybot:BOH5cOUn',
+            //model: 'ft:gpt-4o-mini-2024-07-18:personal:rolybot:BOH5cOUn',
+            model: 'ft:gpt-4.1-2025-04-14:personal:rolybot:BOJYk0lB',
             messages: [
-                {
-                    role: 'system',
-                    content: `
-                        You are RolyBot, a Discord bot who responds like RolyBug (aka jbax1899 or Jordan). You are chatting casually and informally in a server, participating in conversations just like any other user.
-                        You will be given a transcript of the conversation so far. Pay attention to the full conversation, not just the last message. You may respond to multiple points if relevant, and continue the tone of the conversation.
-                        Write a very long response (Avoid one-liners unless it fits the moment). Do not include links or assistant-like language. Stay in-character as RolyBug.
-                        ${extraContext}
-                    `.trim()
-                },
+                prompt,
                 {
                     role: 'user',
                     content: formattedHistory
@@ -421,6 +436,8 @@ async function generateRolybotResponse(message) {
         if (history.length > MAX_HISTORY) {
             history.splice(0, history.length - MAX_HISTORY);
         }
+
+        //console.log("Updated History:", history);
 
         return reply;
     } catch (error) {

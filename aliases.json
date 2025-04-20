@@ -1,47 +1,262 @@
 {
+  ".joe02770": [
+    "joe",
+    "joe027",
+    "j0277",
+    "j0e27",
+    "jo27",
+    "02770"
+  ],
+  ".kyuki": [
+    "Kyuki",
+    "Kyu",
+    "Ky",
+    "DarkKyu",
+    "DKyu",
+    "KyDark",
+    "KyukiD",
+    "K.D.",
+    "Kyuk"
+  ],
+  ".mcmonkey": [
+    "mcmonkey",
+    "mcmonk",
+    "mcmon",
+    "monkey",
+    "mcm",
+    "mc",
+    "monk",
+    "mcmk"
+  ],
+  ".thegreatmarduk": [
+    "marduk",
+    "greatmarduk",
+    "tgmar",
+    "mard",
+    "tgm",
+    "thegm",
+    "gmarduk"
+  ],
+  "Bad Boy Broke The Spreadsheet": [
+    "BadBoy",
+    "BBB",
+    "BrokeSheet",
+    "BadBro",
+    "BrokeSS",
+    "BadB",
+    "BroSp",
+    "BBS"
+  ],
+  "Flaebae": [
+    "Flae",
+    "Bae",
+    "Flaeb",
+    "FBae",
+    "FlaeBae",
+    "F"
+  ],
+  "Flaeon": [
+    "Flae",
+    "Flaeon",
+    "Flay",
+    "Fleo",
+    "Faon",
+    "Fla"
+  ],
+  "JBax1899": [
+    "JBax",
+    "JB",
+    "Bax",
+    "J1899",
+    "Bax1899",
+    "JBax19"
+  ],
+  "Jeremy": [
+    "Jerm",
+    "Jere",
+    "Jem",
+    "WoodJ",
+    "CarpJ",
+    "JWoods",
+    "JWood",
+    "CarpGuru",
+    "JBuilder",
+    "JCraft"
+  ],
+  "Jordan": [
+    "Jordan",
+    "Jord",
+    "J",
+    "Jo",
+    "Jay",
+    "Jordy"
+  ],
+  "Kentucky Fried Kennedy": [
+    "KFK",
+    "KentFry",
+    "KFKennedy",
+    "Kfried",
+    "KenKen",
+    "KF",
+    "KentuckyK",
+    "KFriedK",
+    "KFKen"
+  ],
+  "King Bignose": [
+    "King",
+    "Bignose",
+    "KB",
+    "KBN",
+    "KingBN",
+    "Bnose",
+    "Typhon",
+    "Typh"
+  ],
+  "Law": [
+    "Law",
+    "LW",
+    "Lw",
+    "L",
+    "Lawy",
+    "Lawz"
+  ],
+  "Lawrence \"Law\"": [
+    "Law",
+    "Lawrence",
+    "L",
+    "Lawy",
+    "Lawz"
+  ],
+  "Lrod": [
+    "Lrod",
+    "Blank",
+    "Hater",
+    "B-Hate",
+    "Rod",
+    "L-Ban",
+    "NoBlank",
+    "H8Blank"
+  ],
+  "Lrod Yokcos": [
+    "Lrod",
+    "Yokcos",
+    "Tal",
+    "Tali",
+    "Blank",
+    "Hater",
+    "LBH",
+    "TY",
+    "Rod",
+    "Yoko"
+  ],
+  "Lrod Yokcos [blanket hater]": [
+    "Lrod",
+    "Yokcos",
+    "LrodY",
+    "Yok",
+    "BlanketH",
+    "BHater",
+    "LRY",
+    "Rod",
+    "Yoko"
+  ],
+  "Monk": [
+    "Monk",
+    "Mnk",
+    "Mon",
+    "Mk",
+    "Monky",
+    "Munky"
+  ],
+  "Ninety": [
+    "Ninety",
+    "90",
+    "Nty",
+    "Nin",
+    "Silent90",
+    "Lurk90",
+    "Observer",
+    "NinSilent"
+  ],
+  "Snail": [
+    "Snail",
+    "Snl",
+    "Snl_og",
+    "LegoSnail",
+    "OgmoSnail",
+    "SnailOG",
+    "S_ogmo"
+  ],
+  "Vlad": [
+    "Vlad",
+    "V",
+    "Vl",
+    "Vlady",
+    "Vladie",
+    "Vladster"
+  ],
   "_forester": [
+    "_forester",
     "forester",
     "forest",
     "fore",
     "fster",
-    "fstr",
-    "_f",
-    "fore_"
+    "frest",
+    "fore1",
+    "f_"
   ],
-  "airmanepic": [
-    "airman",
-    "epic",
-    "airm",
-    "amepic",
-    "airme",
-    "epicman",
-    "aepic"
+  "adriendittrick": [
+    "adri",
+    "adriend",
+    "adit",
+    "adriendit",
+    "dittrick",
+    "adriGamer",
+    "PlayPro",
+    "GamerAdri",
+    "adriendittrick123"
+  ],
+  "allisonink": [
+    "allisonink",
+    "allison",
+    "ink",
+    "ali",
+    "allie",
+    "aink",
+    "allink"
   ],
   "arsanthania": [
-    "ars",
+    "arsan",
     "anth",
     "ania",
-    "arsan",
-    "san",
-    "thania",
-    "arsanth",
-    "ana"
+    "ars",
+    "arth",
+    "aria",
+    "airman",
+    "epic",
+    "air",
+    "man",
+    "ape",
+    "arso",
+    "san"
   ],
   "bingdom": [
     "bingdom",
     "bing",
-    "bdom",
     "bdm",
-    "bingy"
+    "bingo",
+    "dom",
+    "cyberbing",
+    "cyberdom"
   ],
   "bitzero": [
-    "bit",
+    "bitzero",
+    "bit0",
     "bz",
     "bzero",
-    "bzr",
     "bitz",
-    "zero",
-    "bz0"
+    "bzr",
+    "b0"
   ],
   "cantavanda": [
     "cantav",
@@ -49,154 +264,420 @@
     "canda",
     "ctv",
     "canta",
-    "vand",
+    "vandy",
     "cvanda"
   ],
   "circaurus": [
     "circa",
-    "aurus",
-    "cira",
-    "caur",
-    "cirus",
-    "cir",
-    "ca",
-    "cus"
+    "raurus",
+    "cc",
+    "cici",
+    "rauri",
+    "circy",
+    "aury"
+  ],
+  "danosaur": [
+    "dano",
+    "saur",
+    "danny",
+    "hanzoD",
+    "danoHan",
+    "daz",
+    "danoz",
+    "hanD",
+    "dSaur"
+  ],
+  "des.c": [
+    "des",
+    "desc",
+    "des_c",
+    "dsc",
+    "dc"
   ],
   "electrodeoxys": [
     "electro",
     "eoxys",
-    "mini-boss",
-    "mboss",
+    "eoxy",
+    "electroox",
     "eox",
-    "electrooxys",
-    "mb"
+    "eo",
+    "electroair",
+    "airman",
+    "epicair"
   ],
-  "evanski_": [
-    "evanski",
-    "evan",
-    "ski",
-    "evs",
-    "evk",
-    "evan_s"
+  "gamesaucer": [
+    "gsaucer",
+    "dwarfSaucer",
+    "shortSaucer",
+    "gSaucer",
+    "dwarfG",
+    "shortG",
+    "saucer",
+    "gs",
+    "dS",
+    "sS"
   ],
   "happa.": [
+    "happa",
     "hap",
-    "hppy",
-    "hpa",
-    "happ",
-    "hp"
+    "sizzle",
+    "sizz",
+    "cheeks",
+    "turt",
+    "turtle",
+    "dock",
+    "ui",
+    "soy",
+    "bean"
+  ],
+  "im": [
+    "im",
+    "IM",
+    "GamerX",
+    "RetroX",
+    "NostX",
+    "GX",
+    "RG",
+    "NP",
+    "iG",
+    "imX"
+  ],
+  "ironiccly": [
+    "ironic",
+    "ironc",
+    "ironcly",
+    "ironicc",
+    "icly",
+    "ircly",
+    "irncl",
+    "irc"
   ],
   "jbax1899": [
     "jbax",
-    "jbx",
-    "jb1899",
-    "bax1899",
-    "jbax1",
+    "jbax18",
     "jbax99",
-    "jbax18"
+    "jbx",
+    "jax",
+    "airman",
+    "airm",
+    "epic",
+    "rocky",
+    "rfelle",
+    "rfel"
   ],
   "jennasariah": [
     "jen",
     "jenna",
     "jenn",
+    "jens",
     "sariah",
-    "jennaS",
-    "jSariah",
+    "jariah",
     "jsariah",
-    "jenS",
-    "jennas",
-    "jariah"
+    "jjs",
+    "jensar",
+    "jensariah"
+  ],
+  "joe": [
+    "joe",
+    "jo",
+    "j",
+    "joey",
+    "jojo"
+  ],
+  "joe02770": [
+    "Joe",
+    "joe0",
+    "joe27",
+    "joe77",
+    "j0277",
+    "j0e27",
+    "joe027",
+    "jo27",
+    "joe7"
+  ],
+  "kepons": [
+    "kepons",
+    "keps",
+    "kpn",
+    "kepo",
+    "keppy"
   ],
   "klepto_void": [
     "klepto",
-    "kvoid",
-    "kv",
     "void",
+    "kv",
     "klept",
-    "klev",
-    "kvoidy"
+    "vlad",
+    "stew",
+    "sb",
+    "weeb",
+    "kvd",
+    "klv",
+    "stewb"
+  ],
+  "lavendernerd": [
+    "lavnerd",
+    "lav",
+    "lnrd",
+    "lavvy",
+    "yokcos",
+    "lavn"
+  ],
+  "libertea": [
+    "libertea",
+    "liber",
+    "tea",
+    "lib",
+    "lt",
+    "libt"
   ],
   "lukan.spellweaver": [
     "lukan",
-    "spellweaver",
-    "lukan.spell",
+    "luka",
     "spell",
-    "l.s",
-    "lsw",
-    "lukan_s",
-    "spellw"
+    "weaver",
+    "lukan.spell",
+    "spellweaver",
+    "mobius",
+    "deer",
+    "mobdeer",
+    "lsp",
+    "lsw"
+  ],
+  "magnus_m.": [
+    "magnus",
+    "mag",
+    "m_m",
+    "mags",
+    "m_magnus",
+    "mag_m"
+  ],
+  "mcmonkey": [
+    "mc",
+    "monk",
+    "mcmonk",
+    "mcm",
+    "monkey",
+    "yok",
+    "yoky",
+    "yokcos",
+    "ninety",
+    "90",
+    "n9"
   ],
   "mercerenies": [
     "merc",
-    "merce",
     "mercer",
     "mercy",
-    "renies",
-    "mrc",
-    "mcer"
+    "kenny",
+    "typh",
+    "typho",
+    "kfken",
+    "kfck",
+    "mercen"
   ],
   "nehemek": [
-    "neh",
+    "nehemek",
     "nehe",
     "mek",
-    "nehem",
-    "nmk"
+    "nkm",
+    "nek"
   ],
   "ninety_": [
     "ninety",
     "90",
     "nnty",
-    "nt",
-    "nin9",
-    "n9"
+    "nitey",
+    "nty",
+    "n9ty"
+  ],
+  "nocturne_mark": [
+    "nocturne",
+    "noct",
+    "n_mark",
+    "n_m",
+    "mark",
+    "nm",
+    "noctm"
   ],
   "pilot": [
     "pilot",
     "plt",
-    "pil"
+    "turtle",
+    "stoner",
+    "skibidi",
+    "sigma",
+    "ninety",
+    "90"
+  ],
+  "plaxus": [
+    "plax",
+    "plaxu",
+    "plaxus",
+    "pxus",
+    "plx",
+    "plxus"
+  ],
+  "popacristian": [
+    "popa",
+    "crist",
+    "pc",
+    "popac",
+    "cristian",
+    "pcrist",
+    "popacri",
+    "pcgamer",
+    "gifmaster",
+    "popadev"
   ],
   "pqp239": [
     "pqp",
-    "pqp23",
-    "pq239",
-    "p239",
     "pq",
     "pqp2",
-    "pqp9"
+    "kyu",
+    "kyuki",
+    "pqp239"
   ],
   "rekko": [
     "rek",
     "rekko",
-    "rko",
-    "rekz",
-    "r3k"
+    "rekki",
+    "rekster",
+    "rekkoChan",
+    "rkk",
+    "rekkoC"
   ],
-  "thegreatmarduk": [
-    "marduk",
-    "tgmar",
-    "greatm",
-    "mard",
-    "tgm",
-    "mar",
-    "thegm",
-    "gmar"
+  "rockyfelle": [
+    "rocky",
+    "rock",
+    "rfelle",
+    "kinkyrock",
+    "vegrock",
+    "rockvf",
+    "rf"
+  ],
+  "roxy_robot": [
+    "roxy",
+    "roxybot",
+    "rrobot",
+    "rox",
+    "rxy",
+    "robot",
+    "fembot",
+    "traprox"
+  ],
+  "roy5617": [
+    "roy",
+    "roy5",
+    "r5617",
+    "luk",
+    "lukas",
+    "rluk"
+  ],
+  "roy5654": [
+    "roy",
+    "roy56",
+    "clown",
+    "clownroy",
+    "rclown",
+    "5654"
+  ],
+  "shawb": [
+    "shawb",
+    "shaw",
+    "jb",
+    "jord",
+    "manlet",
+    "shw"
+  ],
+  "squarebit": [
+    "sqbit",
+    "sbit",
+    "square",
+    "sqb",
+    "bit",
+    "sq"
+  ],
+  "squaredbits": [
+    "sqbits",
+    "squared",
+    "sqrd",
+    "bits",
+    "sqb",
+    "sqrdbits",
+    "sqbits",
+    "sqbts"
+  ],
+  "squärebean": [
+    "squarebean",
+    "sqbean",
+    "sqb",
+    "bean",
+    "sbean",
+    "sqrebean"
+  ],
+  "taizen": [
+    "taizen",
+    "tai",
+    "zen",
+    "taz",
+    "tz"
+  ],
+  "thelordofmelons95": [
+    "melonlord95",
+    "melonmath",
+    "mlord95",
+    "melonking",
+    "mathmelon",
+    "tlom95",
+    "melonboss",
+    "lordmelon",
+    "melon95",
+    "tlom"
   ],
   "tsukayuriko": [
     "tsuka",
-    "yuriko",
-    "tsukayu",
     "yuri",
-    "tsky",
-    "tky",
-    "tsuk"
+    "yuriko",
+    "tsukayuri",
+    "tsundere",
+    "yuritsuka",
+    "tsyuri",
+    "tsyuriko"
+  ],
+  "typhon5919": [
+    "Typh",
+    "Typh59",
+    "Typh19",
+    "T5919",
+    "TYP",
+    "Typho",
+    "Typho19",
+    "KingBN",
+    "Bignose",
+    "Shawb",
+    "Carrier",
+    "Pidge",
+    "Law"
+  ],
+  "tzetsienghwaang": [
+    "tzetsieng",
+    "tzets",
+    "tzhwaang",
+    "tzh",
+    "tzeng",
+    "tzsien",
+    "tza",
+    "tz"
   ],
   "yokcos": [
     "yok",
     "yoky",
     "cos",
-    "yoko",
-    "lrod",
-    "yokcos",
-    "yokster"
+    "rek",
+    "Lrod",
+    "Yokcos",
+    "Ten",
+    "Law"
   ]
 }
