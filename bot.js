@@ -1,6 +1,7 @@
 require('dotenv').config(); // only needed for local development
 const { performance } = require('perf_hooks');
 const fs = require('fs');
+const fs2 = require('fs/promises');
 const path = require('path');
 
 // Logging
@@ -42,7 +43,7 @@ const openai = new OpenAI({
 
 // Bot Knowledge
 const conversationMemory = new Map();
-const MAX_HISTORY = 1;
+const MAX_HISTORY = 5;
 let lastUsage = null;
 
 // Bot Commands
@@ -246,7 +247,7 @@ async function generateValidStatus(openai, typeMap, typeList, maxAttempts = 3) {
         const prompt = `You are a Discord bot that generates funny statuses, one short sentence with the format "<type> <activity>" (without the quotes), where type is ${randomType}.
         For example: "Listening to my music playlist"
         Do not include quotes, markdown, links, hashtags, mentions, or formatting.
-        Keep it clean-ish and funny.
+        Keep it funny and highly creative.
         Target audience: 20s-30s, tech-savvy, enjoys memes and pop culture references.
         Ensure it is a complete sentence less than 50 characters.`;
 
@@ -309,37 +310,106 @@ async function generateRolybotResponse(message) {
     if (!conversationMemory.has(memoryKey)) {
         conversationMemory.set(memoryKey, []);
     }
-    
+
     const history = conversationMemory.get(memoryKey);
     history.push({
         role: 'user',
         content: userPrompt,
         username: message.author.username
     });
-    
+
     if (history.length > MAX_HISTORY) {
         history.splice(0, history.length - MAX_HISTORY);
     }
-    
-    console.log(history);
 
     // No keyword, exit early
     if (!lowerPrompt.includes(KEYWORD)) return null;
 
+    // Convert message history to a single conversation string
+    const formattedHistory = history.map(entry => {
+        if (entry.role === 'user') {
+            return `${entry.username}: ${entry.content}`;
+        } else {
+            return `assistant: ${entry.content}`;
+        }
+    }).join('\n');
+
+    console.log(formattedHistory);
+
+    let extraContext = '';
+
+    try {
+        const [aliasesRaw, usersRaw] = await Promise.all([
+            fs2.readFile('./aliases.json', 'utf-8'),
+            fs2.readFile('./users_cleaned.json', 'utf-8')
+        ]);
+        const aliases = JSON.parse(aliasesRaw);
+        const users = JSON.parse(usersRaw);
+    
+        const promptWords = lowerPrompt.split(/\W+/); // splits on non-word characters
+        const matchedUsernames = new Set();
+    
+        // Log to ensure words are being split correctly
+        //console.log("Prompt Words:", promptWords);
+    
+        // Loop through promptWords and check if any word is present in any alias array
+        for (const word of promptWords) {
+            // Loop through alias arrays
+            for (const aliasKey in aliases) {
+                if (aliases.hasOwnProperty(aliasKey)) {
+                    if (aliases[aliasKey].includes(word)) {
+                        matchedUsernames.add(aliasKey);
+                        break; // No need to check further once a match is found
+                    }
+                }
+            }
+        }
+    
+        // Log matched usernames
+        console.log("Matched Usernames:", matchedUsernames);
+    
+        // Iterate over users array and find the matching profiles
+        for (const username of matchedUsernames) {
+            const user = users.find(user => user.username === username);
+            if (user) {
+                const personalityOneLine = user.personality
+                    .split("\n")
+                    .map(line => line.trim())
+                    .filter(line => line.length > 0)
+                    .join(" ");
+
+                extraContext += `\nProfile of ${username}: [${personalityOneLine}]`;
+            }
+        }
+    
+        // Log extraContext after processing
+        console.log("Extra Context:", extraContext);
+    } catch (err) {
+        console.error('[RolyBot] Error loading aliases or user data:', err);
+    }
+
     const start = performance.now();
     try {
         const response = await openai.chat.completions.create({
-            //model: 'gpt-4o-mini-2024-07-18',
-            model: 'ft:gpt-4o-mini-2024-07-18:personal:rolybot:BNe8pbBT',
+            //model: 'ft:gpt-4o-mini-2024-07-18:personal:rolybot:BOFzPaB6',
+            model: 'ft:gpt-4o-mini-2024-07-18:personal:rolybot:BOH5cOUn',
             messages: [
-                { role: 'system', content: 
-                    `You are RolyBot, a Discord bot that pretends to be RolyBug aka jbax1899 aka Jordan, whom you were trained off of.
-                    I will give you a conversation history and a user prompt in a list of messages, with role, content, and username specified.
-                    Respond only to the last message (the prompt):`},
-                ...history
+                {
+                    role: 'system',
+                    content: `
+                        You are RolyBot, a Discord bot who responds like RolyBug (aka jbax1899 or Jordan). You are chatting casually and informally in a server, participating in conversations just like any other user.
+                        You will be given a transcript of the conversation so far. Pay attention to the full conversation, not just the last message. You may respond to multiple points if relevant, and continue the tone of the conversation.
+                        Write a very long response (Avoid one-liners unless it fits the moment). Do not include links or assistant-like language. Stay in-character as RolyBug.
+                        ${extraContext}
+                    `.trim()
+                },
+                {
+                    role: 'user',
+                    content: formattedHistory
+                }
             ],
             temperature: 0.7,
-            max_tokens: 150
+            max_tokens: 300
         });
 
         const duration = performance.now() - start;
