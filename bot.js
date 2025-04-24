@@ -1,15 +1,3 @@
-/**
- * Entry point for the RolyBot Discord application.
- * - Loads environment variables (via dotenv).
- * - Configures and logs in the Discord client.
- * - Loads text‑based commands from /commands.
- * - Listens for MESSAGE_CREATE events:
- *     • Ignores messages from itself.
- *     • Parses and executes commands prefixed with COMMAND_PREFIX
- *     • Triggers generateRolybotResponse for any message containing “rolybot”.
- * - Sets bot presence on startup.
- */
-
 require('dotenv').config();
 const { Client, GatewayIntentBits, Events } = require('discord.js');
 const logger = require('./utils/logger');

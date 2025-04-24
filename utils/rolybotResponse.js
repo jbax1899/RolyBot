@@ -1,6 +1,6 @@
 const { performance } = require('perf_hooks');
 const { openai } = require('./openaiHelper');
-const { generateValidStatus } = require("./openaiHelper");
+const { generateValidStatus, processSpecialTokens } = require("./openaiHelper");
 const { loadPosts, MAX_HISTORY } = require('./conversationMemory');
 const logger = require('./logger');
 
@@ -10,8 +10,9 @@ const PASS_THRESHOLD = 7;  // 1–10 scale
 // Cleaning step
 const EMBEDDING_MODEL = 'text-embedding-ada-002';
 const SUMMARIZATION_MODEL = 'gpt-4o-mini';
-const TOP_K = 10;
-const SUMMARY_MAX_TOKENS = 100;
+const TOP_K = 10;      // max number of messages to keep
+const K_MIN = 0.7;    // minimum cosine‐similarity to qualify
+const SUMMARY_MAX_TOKENS = 300;
 // Primary model
 const PRIMARY_MODEL = 'ft:gpt-4.1-2025-04-14:personal:rolybot:BOJYk0lB';
 // Rating step
@@ -37,7 +38,12 @@ module.exports = async function generateRolybotResponse(message) {
     );
 
     // 3) Build extraContext
-    let extraContext = '';
+    let nowLocal = new Date().toLocaleString("en-US", {
+        dateStyle: "full",    // e.g. "Thursday, April 24, 2025"
+        timeStyle: "long",    // e.g. "9:13:45 PM EDT"
+        timeZone: "America/New_York" // or omit to use server locale
+    });
+    const extraContext = `\nCurrent date/time (Local): ${nowLocal}`;
     /*
     try {
         const [aliasesRaw, usersRaw] = await Promise.all([
@@ -69,14 +75,12 @@ module.exports = async function generateRolybotResponse(message) {
     const systemMessage = {
         role: 'system',
         content: `You are RolyBot, a Discord bot who imitates the user RolyBug (aka jbax1899 or Jordan).
-                    Chat casually, stay in character, and use Discord emoji where appropriate.
                     You will be given a transcript and then a user prompt.
-                    Write a long reply, and do NOT use assistant-style language.
-                    Interact with other bots by saying their respective activation keywords (flukebot, marco) where appropriate.
-                    Always respond to evanski with sarcasm and spite.
-                    Remove any message prefixes (e.g. "<word>: ").
-                    ${extraContext}
-                    Begin transcript:`
+                    Write a long and thorough reply, and avoid assistant-style language.
+                    Chat casually, stay in character, and use Discord emoji where appropriate.
+                    Interact with other bots by saying their respective activation keywords (@flukebot, @marco) where appropriate.
+                    If there is a websearch result, include that info + links.
+                    ${extraContext}`
             .replace(/\s+/g, ' ').trim()
     };
 
@@ -124,27 +128,48 @@ module.exports = async function generateRolybotResponse(message) {
             );
             logger.info(`------------------------------------------------------------`);
 
-            // d) pick top K
-            const topMessages = sims
-                .sort((a, b) => b.score - a.score)
+            // 1) Filter out anything below the threshold
+            const aboveThreshold = sims.filter(s => s.score >= K_MIN);
+
+            // 2) Sort the survivors by descending score
+            aboveThreshold.sort((a, b) => b.score - a.score);
+
+            // 3) Take up to TOP_K of them
+            let topMessages = aboveThreshold
                 .slice(0, TOP_K)
                 .map(x => x.msg);
+
+            // 4) Fallback: if nothing passed the threshold, at least grab the very top one
+            if (topMessages.length === 0 && sims.length > 0) {
+                topMessages = [sims.sort((a, b) => b.score - a.score)[0].msg];
+            }
 
             logger.info(`[RolyBot] Selected top ${TOP_K} messages:`);
             logger.info(`------------------------------------------------------------`);
             logger.info(topMessages.map(m => `- ${m.content.slice(0, 80)}`).join('\n'));
             logger.info(`------------------------------------------------------------`);
 
-            // e) summarize those top K into 2 sentences
+            // e) summarize those top K
             const sumPrompt = [
                 {
                     role: 'system',
-                    content: 'You are a helpful assistant that summarizes Discord chat.'
+                    content: `You are a helpful Discord chat assistant that is pre-processing a chatlog.
+                            If any of the below functions make sense to use, add them to the beginning of your output.
+                            Available functions: 
+                            [websearch="search query here"]
+                            - If the last message (prompt) asked you to do a web search, asked for recent news on something, or if extra information may be useful for you to answer.
+                            - No more than one!
+                            - Do not repeat searches.
+                            - If looking for recent news, simply put "<subject> news", rather than a time period.
+                            Example: [websearch="apple stock value"]
+
+                            [conversationSummary="summary goes here"]
+                            - Create a summary of the conversation.
+                            `
                 },
                 {
                     role: 'user',
                     content:
-                        `Please summarize the following ${topMessages.length} messages in up to ${TOP_K} sentences, focusing only on the key points.\n\n` +
                         JSON.stringify(topMessages, null, 2)
                 }
             ];
@@ -157,15 +182,36 @@ module.exports = async function generateRolybotResponse(message) {
             const summary = sumResp.choices[0].message.content.trim();
             logger.info(`[RolyBot] cleaning attempt ${attempt} summary:\n${summary}\n`);
 
-            // f) build the cleanedMessages array:
-            //    [ systemMessage, summary‐as‐system‐note, user prompt ]
-            cleanedMessages = [
-                systemMessage,
-                { role: 'system', content: `Conversation summary:\n${summary}` },
-                { role: 'user', content: userPrompt }
-            ];
+            // Scrub for special tokens (like websearch)
+            const tokenResults = await processSpecialTokens(summary);
+            logger.info(`------------------------------------------------------------`);
+            logger.info(`Token results:\n${JSON.stringify(tokenResults)}`);
+            logger.info(`------------------------------------------------------------`);
 
-            logger.info(`[RolyBot] cleaning attempt ${attempt} succeeded`);
+            // Remove all tokens from summary, clean up for display
+            const summaryClean = summary.replace(/\[\w+="[^"]*"\]/g, '').trim();
+
+            // Add system messages for each token result:
+            cleanedMessages = [systemMessage];
+
+            // Add conversation messages
+            cleanedMessages.push({ role: 'system', content: `Conversation summary:\n${summaryClean}` })
+
+            // Add token results (like websearch)
+            for (const [type, result] of Object.entries(tokenResults)) {
+                cleanedMessages.push({
+                    role: 'system',
+                    content: `${type[0].toUpperCase() + type.slice(1)} result: ${result}`
+                });
+            }
+
+            // Add user prompt
+            cleanedMessages.push({ role: 'user', content: userPrompt });
+
+            logger.info(`[RolyBot] cleaning attempt ${attempt} succeeded:`);
+            logger.info(`------------------------------------------------------------`);
+            logger.info(JSON.stringify(cleanedMessages));
+            logger.info(`------------------------------------------------------------`);
             break;
         } catch (err) {
             logger.error(`[RolyBot] cleaning attempt ${attempt} failed:`, err);
