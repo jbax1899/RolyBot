@@ -6,17 +6,18 @@ const logger = require('./logger');
 
 // Constants
 const MAX_RETRY_ATTEMPTS = 3;
-const PASS_THRESHOLD = 7;  // 1–10 scale
+const PASS_THRESHOLD = 9;  // 1–10 scale
 // Cleaning step
 const EMBEDDING_MODEL = 'text-embedding-ada-002';
 const SUMMARIZATION_MODEL = 'gpt-4o-mini';
-const TOP_K = 10;      // max number of messages to keep
-const K_MIN = 0.7;    // minimum cosine‐similarity to qualify
+const TOP_K = 10; // max number of messages to keep
+const K_MIN = 0.7; // minimum cosine‐similarity to qualify
 const SUMMARY_MAX_TOKENS = 300;
 // Primary model
 const PRIMARY_MODEL = 'ft:gpt-4.1-2025-04-14:personal:rolybot:BOJYk0lB';
 // Rating step
 const RATING_MODEL = 'gpt-4o-mini';
+const PROMPT_REFINE_MODEL = 'gpt-4o-mini';
 
 module.exports = async function generateRolybotResponse(message) {
     const userPrompt = message.content;
@@ -76,10 +77,10 @@ module.exports = async function generateRolybotResponse(message) {
         role: 'system',
         content: `You are RolyBot, a Discord bot who imitates the user RolyBug (aka jbax1899 or Jordan).
                     You will be given a transcript and then a user prompt.
-                    Write a long and thorough reply, and avoid assistant-style language.
-                    Chat casually, stay in character, and use Discord emoji where appropriate.
-                    Interact with other bots by saying their respective activation keywords (@flukebot, @marco) where appropriate.
-                    If there is a websearch result, include that info + links.
+                    Write a long and thorough reply. Do not cut your messages too short.
+                    Avoid assistant-style language. Chat casually, stay in character, and use common Discord emoji if appropriate.
+                    If interacting with other people/bots, ping them (e.g. "I agree @RolyBot! ...").
+                    If there is a websearch result, you MUST include the info given and relevant link(s).
                     ${extraContext}`
             .replace(/\s+/g, ' ').trim()
     };
@@ -149,61 +150,93 @@ module.exports = async function generateRolybotResponse(message) {
             logger.info(topMessages.map(m => `- ${m.content.slice(0, 80)}`).join('\n'));
             logger.info(`------------------------------------------------------------`);
 
-            // e) summarize those top K
-            const sumPrompt = [
+            // e1) TOKEN SELECTOR: decide which function‐calls to make
+            const tokenSelectorPrompt = [
                 {
                     role: 'system',
-                    content: `You are a helpful Discord chat assistant that is pre-processing a chatlog.
-                            If any of the below functions make sense to use, add them to the beginning of your output.
-                            Available functions: 
+                    content: `You are tasked with pre-processing a chatlog before it is fed into the main LLM call.
+                            If any of the below functions make sense to use, add them to your output.
+    
+                            Available functions:
+    
                             [websearch="search query here"]
-                            - If the last message (prompt) asked you to do a web search, asked for recent news on something, or if extra information may be useful for you to answer.
-                            - No more than one!
-                            - Do not repeat searches.
-                            - If looking for recent news, simply put "<subject> news", rather than a time period.
-                            Example: [websearch="apple stock value"]
-
-                            [conversationSummary="summary goes here"]
-                            - Create a summary of the conversation.
+                            - Only ONE websearch is allowed at most. Do not include more than one websearch function.
+                            - Only apply to the prompt (${formattedHistory[0]})
+                            - Include if the prompt asked you to do a web search, for recent news on something, or if extra information may be useful for you to answer (like real-time/current information).
+                            - If looking for recent info, do not include a time period.
+                            - Example: [websearch="apple stock value"]
                             `
                 },
                 {
                     role: 'user',
-                    content:
-                        JSON.stringify(topMessages, null, 2)
+                    content: userPrompt
                 }
             ];
-            const sumResp = await openai.chat.completions.create({
+
+            const tokenSelResp = await openai.chat.completions.create({
                 model: SUMMARIZATION_MODEL,
-                messages: sumPrompt,
+                messages: tokenSelectorPrompt,
+                max_tokens: 32,
+                temperature: 0.0
+            });
+
+            const tokenString = tokenSelResp.choices[0].message.content.trim();
+            // e.g. tokenString === '[websearch="apple stock value"][conversationSummary="…"]'
+
+            // e2) RUN your tokens through your handlers
+            const tokenResults = await processSpecialTokens(tokenString);
+
+            // e3) SUMMARIZER: now produce a plain text summary
+            const summarizerPrompt = [
+                {
+                    role: 'system',
+                    content: `
+                            You are a summarizer for a Discord chat assistant.
+                            Summarize the following messages in one or two concise paragraphs.
+                            `.replace(/\s+/g, ' ').trim()
+                },
+                {
+                    role: 'user',
+                    content: JSON.stringify(topMessages, null, 2)
+                }
+            ];
+
+            const sumResp2 = await openai.chat.completions.create({
+                model: SUMMARIZATION_MODEL,
+                messages: summarizerPrompt,
                 max_tokens: SUMMARY_MAX_TOKENS,
                 temperature: 0.3
             });
-            const summary = sumResp.choices[0].message.content.trim();
-            logger.info(`[RolyBot] cleaning attempt ${attempt} summary:\n${summary}\n`);
+            const summaryClean = sumResp2.choices[0].message.content.replace(/\[\w+="[^"]*"\]/g, '').trim(); // Remove tokens from summary for display
 
-            // Scrub for special tokens (like websearch)
-            const tokenResults = await processSpecialTokens(summary);
-            logger.info(`------------------------------------------------------------`);
-            logger.info(`Token results:\n${JSON.stringify(tokenResults)}`);
-            logger.info(`------------------------------------------------------------`);
-
-            // Remove all tokens from summary, clean up for display
-            const summaryClean = summary.replace(/\[\w+="[^"]*"\]/g, '').trim();
-
-            // Add system messages for each token result:
+            // e4) BUILD cleanedMessages
             cleanedMessages = [systemMessage];
 
-            // Add conversation messages
-            cleanedMessages.push({ role: 'system', content: `Conversation summary:\n${summaryClean}` })
-
-            // Add token results (like websearch)
-            for (const [type, result] of Object.entries(tokenResults)) {
+            //  • inject each token result (e.g. websearch results)
+            for (const [type, data] of Object.entries(tokenResults)) {
+                const body = typeof data === 'string'
+                    ? data
+                    : JSON.stringify(data, null, 2);
                 cleanedMessages.push({
                     role: 'system',
-                    content: `${type[0].toUpperCase() + type.slice(1)} result: ${result}`
+                    content: `${type[0].toUpperCase() + type.slice(1)} result:\n${body}`
                 });
             }
+
+            // inject the plain conversation summary
+            cleanedMessages.push({
+                role: 'system',
+                content: `Conversation summary:\n${summaryClean}`
+            });
+
+            // finally the user’s original prompt
+            cleanedMessages.push({
+                role: 'user',
+                content: userPrompt
+            });
+
+            // Add conversation 
+            cleanedMessages.push({ role: 'system', content: `Conversation summary:\n${summaryClean}` })
 
             // Add user prompt
             cleanedMessages.push({ role: 'user', content: userPrompt });
@@ -223,59 +256,132 @@ module.exports = async function generateRolybotResponse(message) {
         cleanedMessages = originalMessages;
     }
 
-    // 6) POST‑STEP: retry loop + rating
+    // 6) POST-STEP: generation + JSON rating + feedback-driven refinement
+    // pull apart cleanedMessages for easy reference
+    const [originalSystem, summaryMsg, ...afterSummary] = cleanedMessages;
     let bestReply = null;
     let bestScore = -Infinity;
+    let promptTweak = null;
 
-    logger.info(`============================================================`);
-    logger.info(`Generating response with the primary model (${PRIMARY_MODEL})`);
-    logger.info(`============================================================`);
-
+    logger.info(`\n[RolyBot] Generating with ${PRIMARY_MODEL}`);
     for (let attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
+        // A) Build genMessages
+        const genMessages = [
+            { role: 'system', content: promptTweak || originalSystem.content },
+            summaryMsg,
+            ...afterSummary
+        ];
+
+        // B) Generate candidate
+        let candidate;
         try {
-            // 6a) ask your finetuned model
-            const t0 = performance.now();
             const ft = await openai.chat.completions.create({
                 model: PRIMARY_MODEL,
-                messages: cleanedMessages,
+                messages: genMessages,
                 temperature: 0.8,
                 max_tokens: 300
             });
-            const candidate = ft.choices[0].message.content.trim();
-            const dt = (performance.now() - t0).toFixed(1);
-            logger.info(`[RolyBot] attempt ${attempt}, recieved (${dt}ms):`);
-            logger.info(`------------------------------------------------------------`);
-            logger.info(`${candidate}`);
-            logger.info(`------------------------------------------------------------`);
+            candidate = ft.choices[0].message.content.trim();
+        } catch (e) {
+            logger.error(`Generation failed (attempt ${attempt}):`, e);
+            break;
+        }
+        logger.info(`Candidate (attempt ${attempt}):\n${candidate}`);
 
-            // 6b) now rate that reply with o4-mini
-            const ratePrompt = `You are a reviewer. Given a transcript and a candidate reply, ` +
-                `rate it on a scale from 1 to 10 (tone, helpfulness, staying in character, and overall quality). ` +
-                `Return ONLY the numeric score.\n\n` +
-                `TRANSCRIPT:\n${JSON.stringify(cleanedMessages, null, 2)}\n\n` +
-                `CANDIDATE:\n${candidate}\n\n` +
-                `SCORE:`;
-
-            const rateResp = await openai.responses.create({
+        // C) Rate with JSON feedback
+        let score = 0, feedback = "";
+        try {
+            const ratingResp = await openai.chat.completions.create({
                 model: RATING_MODEL,
-                input: ratePrompt
+                messages: [
+                    {
+                        role: 'system',
+                        content: `
+                                You are a reviewer. You will be given a conversation transcript and a candidate reply.
+                                Return ONLY valid JSON with two keys:
+                                • score: integer 1-10 (higher is better)
+                                • feedback: a short bullet-list of things to improve.
+                                If a websearch was performed and the results provided, but data was not used, provide the relevant search information/link and demand they be used.
+                                Do not make up any information related to the websearch - Only use the provided websearch data.
+                                The more detail in the reply, the better.
+                                `.replace(/\s+/g, ' ').trim()
+                    },
+                    {
+                        role: 'user',
+                        content:
+                            `TRANSCRIPT:\n${JSON.stringify(cleanedMessages, null, 2)}\n\n` +
+                            `CANDIDATE:\n${candidate}\n\n`
+                    }
+                ],
+                temperature: 0.0
             });
+            const parsed = JSON.parse(ratingResp.choices[0].message.content);
+            score = parsed.score || 0;
+            feedback = parsed.feedback || "";
+        } catch (e) {
+            logger.warn("Rating JSON parse failed, falling back to numeric scan");
+            const raw = ratingResp.choices[0].message.content;
+            score = parseFloat(raw.match(/\d+/)?.[0]) || 0;
+            feedback = raw.trim();
+        }
+        logger.info(`Rating (attempt ${attempt}): ${score}/10 — feedback:\n${feedback}`);
 
-            const score = parseFloat(rateResp.output_text.trim()) || 0;
-            logger.info(`[RolyBot] rating attempt ${attempt} score: ${score}`);
+        // D) Track best
+        if (score > bestScore) {
+            bestScore = score;
+            bestReply = candidate;
+        }
+        if (score >= PASS_THRESHOLD) {
+            logger.info(`→ Passed threshold (${score}≥${PASS_THRESHOLD})`);
+            break;
+        }
 
-            if (score > bestScore) {
-                bestScore = score;
-                bestReply = candidate;
-            }
-            if (score >= PASS_THRESHOLD) {
-                logger.info("[RolyBot] Response passes judgement (minimum score of " + PASS_THRESHOLD + " required)");
-                break;
+        // E) Refine the system prompt using the feedback
+        const restContent = afterSummary.map(m => m.content).join("\n\n");
+
+        /*
+        logger.warn(`Original system prompt:\n${originalSystem.content}\n\n` +
+                    `Conversation summary:\n${summaryMsg.content}\n\n` +
+                    `Other context:\n${restContent}\n\n` +
+                    `Last candidate scored ${score}/10 for these reasons:\n${feedback}\n\n` +
+                    `Please output *only* the revised system prompt.`)
+        */
+
+        try {
+            const refine = await openai.chat.completions.create({
+                model: PROMPT_REFINE_MODEL,
+                messages: [
+                    {
+                        role: 'system',
+                        content: `
+                                You are a prompt-engineering assistant.
+                                Improve the *system prompt* so that the next reply will fix the issues listed below.
+                                `.replace(/\s+/g, ' ').trim()
+                    },
+                    {
+                        role: 'user',
+                        content:
+                            `Original system prompt:\n${originalSystem.content}\n\n` +
+                            `Conversation summary:\n${summaryMsg.content}\n\n` +
+                            `Other context:\n${restContent}\n\n` +
+                            `Last candidate scored ${score}/10 for these reasons:\n${feedback}\n\n` +
+                            `Please output *only* the revised system prompt.`
+                    }
+                ],
+                temperature: 0.0,
+                max_tokens: 200
+            });
+            const newPrompt = refine.choices[0].message.content.trim();
+            if (newPrompt && newPrompt !== promptTweak) {
+                promptTweak = newPrompt;
+                logger.info(`Prompt tweaked for next attempt.`);
             } else {
-                logger.info("[RolyBot] Response fails judgement (minimum score of " + PASS_THRESHOLD + " required)");
+                logger.warn(`Refiner did not change the prompt; aborting further refinements.`);
+                break;
             }
-        } catch (err) {
-            logger.error(`[RolyBot] rating attempt ${attempt} error:`, err);
+        } catch (e) {
+            logger.error(`Refinement failed:`, e);
+            break;
         }
     }
 

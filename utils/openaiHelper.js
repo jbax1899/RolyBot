@@ -1,5 +1,6 @@
 const OpenAI = require("openai");
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const logger = require('./logger');
 
 const typeMap = { Playing: 0, Streaming: 1, Listening: 2, Watching: 3 };
 const typeNames = Object.keys(typeMap);
@@ -84,17 +85,25 @@ async function generateValidStatus(context = "", maxAttempts = 3) {
  * @returns {Promise<Object>} object like { search: "Results...", weather: "Results..." }
  */
 async function processSpecialTokens(text) {
-    // Find all tokens: [type="content"]
-    const matches = Array.from(text.matchAll(TOKEN_REGEX));
     const results = {};
+    for (let [, type, content] of text.matchAll(TOKEN_REGEX)) {
+        if (!tokenHandlers[type]) continue;
 
-    for (let [, type, content] of matches) {
-        if (tokenHandlers[type]) {
-            try {
-                results[type] = await tokenHandlers[type](content);
-            } catch (e) {
-                results[type] = `Error handling ${type}: ${e.message}`;
+        try {
+            let raw = await tokenHandlers[type](content);
+
+            // if it’s a string, but valid JSON, parse it
+            if (typeof raw === "string") {
+                try {
+                    raw = JSON.parse(raw);
+                } catch {
+                    // not JSON, leave as string
+                }
             }
+
+            results[type] = raw;
+        } catch (e) {
+            results[type] = `Error handling ${type}: ${e.message}`;
         }
     }
     return results;
@@ -135,6 +144,11 @@ async function handleWebSearch(query) {
         const items = json.items || [];
         if (items.length === 0) {
             return `No results found for "${query}".`;
+        } else {
+            logger.info("Search results:");
+            logger.info(`------------------------------------------------------------`);
+            logger.info(JSON.stringify(items))
+            logger.info(`------------------------------------------------------------`);
         }
 
         // Build a single JSON array: first element = the query, then up to X result‐objects
@@ -143,18 +157,12 @@ async function handleWebSearch(query) {
         ].concat(
             items.slice(0, RETURN_RESULTS).map(item => ({
                 title: item.title || null,
-                //htmlTitle: item.htmlTitle || null,
                 snippet: item.snippet || null,
-                //htmlSnippet: item.htmlSnippet || null,
                 link: item.link || null,
-                //displayLink: item.displayLink || null,
-                //formattedUrl: item.formattedUrl || null,
-                //htmlFormattedUrl: item.htmlFormattedUrl || null,
-                //pagemap: item.pagemap || {} // any extra metadata Google gives
             }))
         );
 
-        return JSON.stringify(resultsArray, null, 2);
+        return resultsArray;
 
     } catch (err) {
         console.warn(`[handleWebSearch] error for "${query}":`, err.message);
@@ -165,5 +173,5 @@ async function handleWebSearch(query) {
 module.exports = {
     openai,
     generateValidStatus,
-    processSpecialTokens
+    processSpecialTokens,
 };
