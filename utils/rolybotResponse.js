@@ -1,4 +1,3 @@
-const { performance } = require('perf_hooks');
 const { openai } = require('./openaiHelper');
 const { generateValidStatus, processSpecialTokens } = require("./openaiHelper");
 const { loadPosts, MAX_HISTORY } = require('./conversationMemory');
@@ -6,7 +5,7 @@ const logger = require('./logger');
 
 // Constants
 const MAX_RETRY_ATTEMPTS = 3;
-const PASS_THRESHOLD = 9;  // 1–10 scale
+const PASS_THRESHOLD = 8;  // 1–10 scale
 // Cleaning step
 const EMBEDDING_MODEL = 'text-embedding-ada-002';
 const SUMMARIZATION_MODEL = 'gpt-4o-mini';
@@ -40,9 +39,8 @@ module.exports = async function generateRolybotResponse(message) {
 
     // 3) Build extraContext
     let nowLocal = new Date().toLocaleString("en-US", {
-        dateStyle: "full",    // e.g. "Thursday, April 24, 2025"
-        timeStyle: "long",    // e.g. "9:13:45 PM EDT"
-        timeZone: "America/New_York" // or omit to use server locale
+        dateStyle: "full", // e.g. "Thursday, April 24, 2025"
+        timeStyle: "long" // e.g. "9:13:45 PM EDT"
     });
     const extraContext = `\nCurrent date/time (Local): ${nowLocal}`;
     /*
@@ -72,7 +70,7 @@ module.exports = async function generateRolybotResponse(message) {
     }
     */
 
-    // 4) Build the un‑cleaned payload (including the user prompt!)
+    // 4) Build the un‑cleaned payload
     const systemMessage = {
         role: 'system',
         content: `You are RolyBot, a Discord bot who imitates the user RolyBug (aka jbax1899 or Jordan).
@@ -80,7 +78,8 @@ module.exports = async function generateRolybotResponse(message) {
                     Write a long and thorough reply. Do not cut your messages too short.
                     Avoid assistant-style language. Chat casually, stay in character, and use common Discord emoji if appropriate.
                     If interacting with other people/bots, ping them (e.g. "I agree @RolyBot! ...").
-                    If there is a websearch result, you MUST include the info given and relevant link(s).
+                    If there is a websearch result, you MUST include the info given and relevant link(s), and only that info.
+                    Do not act overly pleasant (You are chatting with close friends, not strangers).
                     ${extraContext}`
             .replace(/\s+/g, ' ').trim()
     };
@@ -165,6 +164,17 @@ module.exports = async function generateRolybotResponse(message) {
                             - Include if the prompt asked you to do a web search, for recent news on something, or if extra information may be useful for you to answer (like real-time/current information).
                             - If looking for recent info, do not include a time period.
                             - Example: [websearch="apple stock value"]
+
+                            [context="aboutBot"]
+                            - Include if extra information about the bot would be useful.
+                            - Provides context like who made the bot, what language the bot was coded in, when the bot was made, etc.
+
+                            [context="aboutRolybug"]
+                            - Include if extra information about Rolybug/Jordan/jbax1899 would be useful.
+                            - Provides context like who he is, what he likes, who his friends are, etc.
+
+                            [context="changelog"]
+                            - Include if extra information about recent changes to the bot's code/functionality would be useful.
                             `
                 },
                 {
@@ -181,7 +191,7 @@ module.exports = async function generateRolybotResponse(message) {
             });
 
             const tokenString = tokenSelResp.choices[0].message.content.trim();
-            // e.g. tokenString === '[websearch="apple stock value"][conversationSummary="…"]'
+            logger.info("Selected tokens: " + tokenString)
 
             // e2) RUN your tokens through your handlers
             const tokenResults = await processSpecialTokens(tokenString);
@@ -212,15 +222,17 @@ module.exports = async function generateRolybotResponse(message) {
             // e4) BUILD cleanedMessages
             cleanedMessages = [systemMessage];
 
-            //  • inject each token result (e.g. websearch results)
-            for (const [type, data] of Object.entries(tokenResults)) {
-                const body = typeof data === 'string'
+            // inject each token result (e.g. websearch results)
+            for (const [key, data] of Object.entries(tokenResults)) {
+                const header = key[0].toUpperCase() + key.slice(1);
+                const body = typeof data === "string"
                     ? data
                     : JSON.stringify(data, null, 2);
                 cleanedMessages.push({
                     role: 'system',
-                    content: `${type[0].toUpperCase() + type.slice(1)} result:\n${body}`
+                    content: `${header}:\n${body}`
                 });
+                //logger.info(`${header}:\n${body}`)
             }
 
             // inject the plain conversation summary

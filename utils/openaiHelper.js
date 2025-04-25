@@ -4,7 +4,6 @@ const logger = require('./logger');
 
 const typeMap = { Playing: 0, Streaming: 1, Listening: 2, Watching: 3 };
 const typeNames = Object.keys(typeMap);
-const STATUS_MODEL = "gpt-4o-mini";
 const tokenHandlers = {
     websearch: handleWebSearch,
     search: handleWebSearch,
@@ -12,7 +11,15 @@ const tokenHandlers = {
 const TOKEN_REGEX = /\[(\w+)="([^"]+)"\]/g;
 const RETURN_RESULTS = 3;
 
+// Load extra context from file
+const path = require("path");
+const fs = require("fs");
+const contextPath = path.join(__dirname, "context.json");
+const contextData = JSON.parse(fs.readFileSync(contextPath, "utf8"));
+
 async function generateValidStatus(context = "", maxAttempts = 3) {
+    const STATUS_MODEL = "gpt-4o-mini";
+
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         const typeWord = typeNames[Math.floor(Math.random() * typeNames.length)]; // Grab a random type
 
@@ -87,24 +94,27 @@ async function generateValidStatus(context = "", maxAttempts = 3) {
 async function processSpecialTokens(text) {
     const results = {};
     for (let [, type, content] of text.matchAll(TOKEN_REGEX)) {
-        if (!tokenHandlers[type]) continue;
-
-        try {
-            let raw = await tokenHandlers[type](content);
-
-            // if it’s a string, but valid JSON, parse it
-            if (typeof raw === "string") {
-                try {
-                    raw = JSON.parse(raw);
-                } catch {
-                    // not JSON, leave as string
-                }
+        if (type === "context") {
+            // pick the right key out of context.json
+            if (!contextData[content]) {
+                results[content] = `⚠️ No context found for "${content}"`;
+            } else {
+                results[content] = contextData[content];
             }
-
-            results[type] = raw;
-        } catch (e) {
-            results[type] = `Error handling ${type}: ${e.message}`;
         }
+        else if (tokenHandlers[type]) {
+            try {
+                let raw = await tokenHandlers[type](content);
+                // try parse JSON strings
+                if (typeof raw === "string") {
+                    try { raw = JSON.parse(raw) } catch { }
+                }
+                results[type] = raw;
+            } catch (e) {
+                results[type] = `Error handling ${type}: ${e.message}`;
+            }
+        }
+        // otherwise ignore unknown tokens
     }
     return results;
 }
