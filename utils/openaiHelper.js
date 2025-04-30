@@ -102,6 +102,16 @@ async function processSpecialTokens(text) {
                 results[content] = contextData[content];
             }
         }
+        else if (type === "sleep") {
+            // sleep for a given number of seconds
+            const seconds = parseInt(content, 10);
+            if (isNaN(seconds) || seconds <= 0) {
+                logger.warn(`⚠️ Invalid sleep duration: "${content}"`);
+            } else {
+                goAFK(seconds);
+                logger.info(`Sleeping for ${seconds} seconds.`);
+            }
+        }
         else if (tokenHandlers[type]) {
             try {
                 let raw = await tokenHandlers[type](content);

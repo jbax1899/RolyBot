@@ -4,7 +4,28 @@
         "creator": "RolyBug (aka jbax1899/Jordan)",
         "language": "JavaScript (Node.js)",
         "created": "April 2025",
-        "description": "RolyBot is a Discord chatbot that pretends to be its creator (RolyBug), emulate his writing/speaking style."
+        "description": "RolyBot is a Discord chatbot that pretends to be its creator (RolyBug), emulate his writing/speaking style.",
+        "features": [
+            "Chatbot",
+            "Web search integration",
+            "Warm AFK triggers",
+            "Dynamic context management"
+        ],
+        "commands": [
+            {
+                "name": "help",
+                "description": "Provides a list of available commands and their usage."
+            },
+            {
+                "name": "status",
+                "description": "Displays the current status of the bot."
+            }
+        ],
+        "software": [
+            "Node.js",
+            "Discord.js",
+            "OpenAI API"
+        ]
     },
     "aboutRolybug": {
         "name": "Jordan",
@@ -73,7 +94,13 @@
         ]
     },
     "changelog": [
-        { "date": "2025-04-25", "desc": "When RolyBot is prompted too much in a short span of time, it triggers a message saying that he is going AFK, blocking additional requests for a short time. RolyBot can now request additional context from a static JSON file, context.json, about various things, like info about itself or RolyBug." },
-        {}
+        { 
+            "date": "2025-04-25", 
+            "desc": "When RolyBot is prompted too much in a short span of time, it triggers a message saying that he is going AFK, blocking additional requests for a short time. RolyBot can now request additional context from a static JSON file, context.json, about various things, like info about itself or RolyBug."
+        },
+        { 
+            "date": "2025-04-29", 
+            "desc": "Improved cleaning pre-step and memory context handling. Bot now replies to others more naturally. When directly replying to the bot, the replied-to message (regardless of age) is appended to the prompt as extra context. Links are put within brackets to prevent embedding."
+        }
     ]
 }

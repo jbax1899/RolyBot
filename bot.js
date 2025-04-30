@@ -1,3 +1,15 @@
+/**
+ * Main entry point for RolyBot:
+ *  - Loads environment variables from .env (DISCORD_BOT_TOKEN, COMMAND_PREFIX, etc.)
+ *  - Initializes Discord.js client with necessary intents (Guilds, GuildMessages, MessageContent)
+ *  - Hooks in structured logging for warnings/errors
+ *  - Loads and dispatches text commands under the COMMAND_PREFIX (default “!rb”)
+ *  - Listens for keyword (“rolybot”), direct mentions, or replies to the bot to trigger AI responses
+ *  - Wraps OpenAI calls for conversational replies, with a typing indicator
+ *  - Enforces rate limits (MAX_REQUESTS per WINDOW_SECONDS) and toggles AFK/idle mode on overuse
+ *  - Manages a busy flag to serialize in-flight prompts and a cooldown timer
+ */
+
 require('dotenv').config();
 const { Client, GatewayIntentBits, Events } = require('discord.js');
 const logger = require('./utils/logger');
@@ -10,11 +22,12 @@ const KEYWORD = "rolybot";
 const token = process.env.DISCORD_BOT_TOKEN;
 
 // Rate limiter config
-const MAX_REQUESTS = 10; // Max allowed in window
+const MAX_REQUESTS = 20; // Max allowed in window
 const WINDOW_SECONDS = 300; // Window duration (seconds)
-const RATE_LIMIT_SECONDS = parseInt(process.env.RATE_LIMIT_SECONDS, 10) || 0; // after a request, how long until we can re-prompt
+const RATE_LIMIT_SECONDS = parseInt(process.env.RATE_LIMIT_SECONDS, 10) || 0;
+const MAX_AFK_DURATION = parseInt(process.env.MAX_AFK_DURATION, 10) || 300; // Max AFK duration (seconds)
 let rolybotBusy = false; // Only handle one prompt at a time
-let rolybotAFK = false;
+let rolybotAFK = false; // Don't respond if "AFK"
 let requestTimestamps = [];
 
 if (!token) {
@@ -69,29 +82,42 @@ function tooManyRolybotRequests() {
     return recent.length > MAX_REQUESTS;
 }
 
-async function goAFK(client) {
+/**
+ * goAFK()
+ *   - duration: seconds to remain AFK
+ *   - message:  the Message that triggered the AFK
+ */
+async function goAFK(duration = RATE_LIMIT_SECONDS, message) {
     rolybotAFK = true;
     rolybotBusy = false;
-    const AFK_MODEL = 'gpt-4o-mini';
+    
+    if (duration > MAX_AFK_DURATION) {
+        duration = MAX_AFK_DURATION;
+        logger.warn(`[RolyBot] AFK duration limited to ${MAX_AFK_DURATION}s`);
+    }
 
-    const prompt = `
-    You are a Discord bot that has been activated too much in a short period of time, exceeding the rate limit.
-    You are to generate a short, one-line message explaining that you are going AFK for a few minutes.
-    `.trim();
+    logger.info(`[RolyBot] Going AFK for ${duration}s`);
 
-    const response = await openai.responses.create({
-        model: AFK_MODEL,
-        input: prompt,
-        temperature: 0.7
-    });
+    // Schedule the wake-up
+    setTimeout(async () => {
+        rolybotAFK = false;
+        requestTimestamps = []; // clear rate limiter
+        await client.user.setPresence({ status: 'online' });
+        logger.info(`[RolyBot] AFK expired — back online`);
+    }, duration * 1000);
 
-    await message.reply(response);
+    if (message) {
+        // Generate a one-line “I’m going AFK” reply
+        const afkNotice = await generateRolybotResponse({
+            content: `You are a Discord bot that needs to take a ${duration}-second break. Generate one short line explaining you're going AFK.
+                        You are replying to this message: ${message}`
+        });
 
-    await generateValidStatus("You are going AFK for a little bit");
+        await message.reply(afkNotice || "I'm going AFK for a bit. Be back soon!");
+    }
 
-    await client.user.setPresence({ status: 'idle' });
-
-    logger.warn('[RolyBot] Rate limit exceeded: Going AFK');
+    // Set presence to idle
+    client.user.setPresence({ status: 'idle' });  
 }
 
 // Handle incoming messages
@@ -140,16 +166,7 @@ client.on(Events.MessageCreate, async message => {
 
         recordRolybotRequest();
         if (tooManyRolybotRequests()) {
-            await goAFK(client);
-
-            // Wake up after RATE_LIMIT_SECONDS (fallback, or let USER command wake up)
-            setTimeout(async () => {
-                rolybotAFK = false;
-                await client.user.setPresence({ status: 'online' });
-                logger.info(`[RolyBot] AFK expired: resuming normal operation.`);
-                // Clear timestamps so it doesn't immediately AFK again.
-                requestTimestamps = [];
-            }, RATE_LIMIT_SECONDS * 1000);
+            await goAFK(60, message);
             return;
         }
 
@@ -172,7 +189,7 @@ client.on(Events.MessageCreate, async message => {
                     `In reply to: ${repliedTo.content}\n` +
                     message.content;
             }
-            const reply = await generateRolybotResponse(message);
+            const reply = await generateRolybotResponse(message, repliedTo?.content);
             if (reply) await message.reply(reply);
         } catch (err) {
             logger.error("[RolyBot] generateRolybotResponse error:", err);
