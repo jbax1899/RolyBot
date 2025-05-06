@@ -1,10 +1,10 @@
 const { openai, generateValidStatus, processSpecialTokens } = require("./openaiHelper");
-const { loadPosts, MAX_HISTORY } = require('./conversationMemory');
 const logger = require('./logger');
 
 // Constants
+const MAX_HISTORY = 20;
 const MAX_RETRY_ATTEMPTS = 3;
-const PASS_THRESHOLD = 8;           // 1–10 scale
+const PASS_THRESHOLD = 7;           // 1–10 scale
 const SUMMARY_MODEL = 'gpt-4o-mini';
 const SUMMARY_MAX_TOKENS = 300;
 const MAX_RECENT_TURNS = 10;
@@ -12,7 +12,7 @@ const PRIMARY_MODEL = 'ft:gpt-4.1-2025-04-14:personal:rolybot:BOJYk0lB';
 const RATING_MODEL = 'gpt-4o-mini';
 const PROMPT_REFINE_MODEL = 'gpt-4o-mini';
 
-module.exports = async function generateRolybotResponse(message, replyContext = '') {
+async function generateRolybotResponse(client, message, replyContext = '') {
     const userPrompt = message.content;
     const channel = message.channel;
 
@@ -42,7 +42,7 @@ module.exports = async function generateRolybotResponse(message, replyContext = 
                     Avoid assistant-style language. Chat casually, stay in character, and use common Discord emoji if appropriate.
                     If directly responding to another person or bot, ping them (e.g. "I agree @RolyBot! ...").
                     If there is a websearch result, you MUST include the info given and relevant link(s), and only that info.
-                    Put links within brackets, to prevent Discord from embedding them.
+                    To prevent Discord from creating embeddings, do not hyperlink text, and put links within brackets.
                     Do not act overly pleasant (You are chatting with close friends, not strangers).
                     Do not reply to yourself.
                     Current date/time (Local): ${nowLocal}
@@ -141,7 +141,7 @@ module.exports = async function generateRolybotResponse(message, replyContext = 
                 temperature: 0.0
             });
             const tokenString = tokenSelResp.choices[0].message.content.trim();
-            const tokenResults = await processSpecialTokens(tokenString);
+            const tokenResults = await processSpecialTokens(client, tokenString);
 
             // 3e) inject any results
             for (const [key, data] of Object.entries(tokenResults)) {
@@ -179,8 +179,10 @@ module.exports = async function generateRolybotResponse(message, replyContext = 
     let bestReply = null;
     let bestScore = -Infinity;
     let promptTweak = null;
+    let feedbackHistory = [];
 
     logger.info(`\n[RolyBot] Generating with ${PRIMARY_MODEL}`);
+
     for (let attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
         // A) Build genMessages
         const genMessages = [
@@ -204,7 +206,7 @@ module.exports = async function generateRolybotResponse(message, replyContext = 
         }
         logger.info(`Candidate (attempt ${attempt}):\n${candidate}`);
 
-        // C) Rate with JSON feedback
+        // C) Rate the candidate
         let score = 0, feedback = "";
         let ratingResp;
         try {
@@ -217,10 +219,10 @@ module.exports = async function generateRolybotResponse(message, replyContext = 
                                 You are a reviewer. You will be given a conversation transcript and a candidate reply.
                                 Return ONLY valid JSON with two keys:
                                 • score: integer 1-10 (higher is better)
-                                • feedback: a short bullet-list of things to improve.
+                                • feedback: an example response that incorporates those fixes (e.g. "More like this: <response>").
+                                The most important aspect of the response is to engage with the conversation (from the last message, not the entire transcript) and build upon it.
                                 If a websearch was performed and the results provided, but data was not used, provide the relevant search information/link and demand they be used.
                                 Do not make up any information related to the websearch - Only use the provided websearch data.
-                                The more detail in the reply, the better.
                                 `.replace(/\s+/g, ' ').trim()
                     },
                     {
@@ -235,6 +237,12 @@ module.exports = async function generateRolybotResponse(message, replyContext = 
             const parsed = JSON.parse(ratingResp?.choices[0].message.content || "{}");
             score = parsed.score || 0;
             feedback = parsed.feedback || "";
+            feedbackHistory.push({
+                attempt,
+                candidate,
+                score,
+                feedback
+            });
         } catch (e) {
             logger.warn("Rating JSON parse failed, falling back to numeric scan");
             const raw = ratingResp.choices[0].message.content;
@@ -255,6 +263,9 @@ module.exports = async function generateRolybotResponse(message, replyContext = 
 
         // E) Refine the system prompt using the feedback
         const restContent = restMessages.map(m => m.content).join("\n\n");
+        const allFeedbackStr = feedbackHistory.map(f =>
+            `Attempt ${f.attempt} (Candidate: ${f.candidate}\nScore: ${f.score}/10\nFeedback: ${f.feedback})`).join('\n\n');
+        logger.info(`Feedback history:\n${allFeedbackStr}`);
 
         try {
             const refine = await openai.chat.completions.create({
@@ -273,7 +284,7 @@ module.exports = async function generateRolybotResponse(message, replyContext = 
                             `Original system prompt:\n${originalSystem.content}\n\n` +
                             `Conversation summary:\n${summaryMsg?.content || 'none'}\n\n` +
                             `Other context:\n${restContent}\n\n` +
-                            `Last candidate scored ${score}/10 for these reasons:\n${feedback}\n\n` +
+                            `Feedback history for all attempts:\n${allFeedbackStr}\n\n` +
                             `Output *only* the revised system prompt.`
                     }
                 ],
@@ -321,3 +332,36 @@ module.exports = async function generateRolybotResponse(message, replyContext = 
     // Finally, return the generated reply
     return bestReply || "Sorry, I had trouble thinking of a response :(";
 };
+
+/**
+ * Fetches the last MAX_HISTORY messages from the given TextChannel,
+ * sorts them oldest→newest, and maps them into
+ * { role: 'user'|'assistant', content, username } entries.
+ *
+ * Only messages authored by _this_ bot become role:'assistant'.
+ * Everyone else (people or other bots) are role:'user'.
+ */
+async function loadPosts(channel, limit = MAX_HISTORY) {
+    // fetch the most recent `limit` messages
+    const fetched = await channel.messages.fetch({ limit });
+  
+    // sort oldest→newest
+    const sorted = Array.from(fetched.values())
+      .sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+  
+    // grab _this_ bot's ID
+    const myBotId = channel.client.user.id;
+  
+    // map into our chat‑format
+    return sorted.map(m => {
+        const isMe = m.author.id === myBotId;
+        return {
+            role: isMe ? 'assistant' : 'user',
+            // if it's _not_ me, prepend the username so the LLM knows who said what
+            content: isMe ? m.content : `${m.author.username}: ${m.content}`,
+            username: m.author.username
+        };
+    });
+}
+
+module.exports = generateRolybotResponse;

@@ -11,6 +11,14 @@ const tokenHandlers = {
 const TOKEN_REGEX = /\[(\w+)="([^"]+)"\]/g;
 const RETURN_RESULTS = 3;
 
+// Rate limiting
+const AFK_MODEL = 'gpt-4o-mini';
+const MAX_REQUESTS = 3; // Max allowed in window
+const WINDOW_SECONDS = 180; // Window duration (seconds)
+const RATE_LIMIT_SECONDS = 10; // AFK duration (seconds) to default to if it is not provided
+const MAX_AFK_DURATION = 300; // Max AFK duration (seconds)
+let requestTimestamps = [];
+
 // Load extra context from file
 const path = require("path");
 const fs = require("fs");
@@ -91,7 +99,7 @@ async function generateValidStatus(context = "", maxAttempts = 3) {
  * @param {string} text
  * @returns {Promise<Object>} object like { search: "Results...", weather: "Results..." }
  */
-async function processSpecialTokens(text) {
+async function processSpecialTokens(client, text) {
     const results = {};
     for (let [, type, content] of text.matchAll(TOKEN_REGEX)) {
         if (type === "context") {
@@ -108,7 +116,7 @@ async function processSpecialTokens(text) {
             if (isNaN(seconds) || seconds <= 0) {
                 logger.warn(`⚠️ Invalid sleep duration: "${content}"`);
             } else {
-                goAFK(seconds);
+                goAFK(client, seconds);
                 logger.info(`Sleeping for ${seconds} seconds.`);
             }
         }
@@ -190,8 +198,79 @@ async function handleWebSearch(query) {
     }
 }
 
+function recordRolybotRequest() {
+    const now = Date.now();
+    requestTimestamps.push(now);
+    // Only keep requests in WINDOW_SECONDS seconds
+    requestTimestamps = requestTimestamps.filter(
+        ts => now - ts < WINDOW_SECONDS * 1000
+    );
+}
+
+function tooManyRolybotRequests() {
+    const now = Date.now();
+    // Only count recent requests in WINDOW_SECONDS seconds
+    const recent = requestTimestamps.filter(
+        ts => now - ts < WINDOW_SECONDS * 1000
+    );
+    return recent.length > MAX_REQUESTS;
+}
+
+async function goAFK(client, duration = RATE_LIMIT_SECONDS, message, setAFK) {
+    if (duration > MAX_AFK_DURATION) {
+        duration = MAX_AFK_DURATION;
+        logger.warn(`[RolyBot] AFK duration (${duration}s) limited to ${MAX_AFK_DURATION}s`);
+    }
+
+    logger.info(`[RolyBot] Going AFK for ${duration}s`);
+
+    if (setAFK) { setAFK(true); }
+
+    // Schedule the wake-up
+    setTimeout(async () => {
+        if (setAFK) { setAFK(false); }
+        requestTimestamps = []; // clear rate limiter
+        await client.user.setPresence({ status: 'online' });
+        logger.info(`[RolyBot] AFK expired — back online`);
+    }, duration * 1000);
+
+    /*
+    if (message) {
+        // Generate a one-line “I’m going AFK” reply
+        const prompt = `You are a Discord bot that needs to take a ${duration}-second break. 
+            Generate one short line explaining you're going AFK.
+            You are replying to this message:`;
+        let afkNotice = null;
+        try {
+            const request = await openai.chat.completions.create({
+                model: AFK_MODEL,
+                messages: [
+                    { role: 'system', content: prompt },
+                    { role: 'user', content: message }
+                ],
+                temperature: 0.7,
+                max_tokens: 300
+            });
+            logger.info(`[RolyBot] AFK notice generation request: ${request}`);
+            afkNotice = request.choices[0].message.content.trim();
+            logger.info(`[RolyBot] AFK notice: ${afkNotice}`);
+        } catch (e) {
+            logger.error(`AFK notice generation failed:`, e);
+        }
+
+        await message.reply(afkNotice || "I'm going AFK for a bit. Be back soon!");
+    }
+    */
+
+    // Set presence to idle
+    client.user.setPresence({ status: 'idle' });  
+}
+
 module.exports = {
     openai,
     generateValidStatus,
     processSpecialTokens,
+    recordRolybotRequest,
+    tooManyRolybotRequests,
+    goAFK
 };
