@@ -18,6 +18,7 @@ async function loadPosts(channel, limit = MAX_HISTORY) {
 
   // grab _this_ bot's ID
   const myBotId = channel.client.user.id;
+
   // map into our chat‑format
   return sorted.map(m => {
     const isMe = m.author.id === myBotId;
