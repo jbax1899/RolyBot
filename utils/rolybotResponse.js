@@ -59,7 +59,7 @@ async function generateRolybotResponse(client, message, replyContext = '') {
     // 3b) Inject function tokens
     const contextFunctionMessages = await injectContextFunctionTokens({
         client,
-        prompt: userPrompt + (similarMessagesSummary?.content || ''),
+        userPrompt: userPrompt + (similarMessagesSummary?.content || ''),
         openai,
         SUMMARY_MODEL
     });
