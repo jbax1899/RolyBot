@@ -1,203 +1,109 @@
-const { openai, generateValidStatus, processSpecialTokens } = require("./openaiHelper");
 const logger = require('./logger');
+const {
+    generateSystemMessage,
+    generateSimilarMessagesSummary,
+    injectContextFunctionTokens,
+    rateAndRefinePrompt
+} = require('./contextGenerators');
+const MemoryManager = require('./memoryManager');
+const { openai } = require('./openaiHelper');
+
+// Use centralized memory manager to get memory retriever
+const memoryRetriever = MemoryManager.memoryRetriever;
 
 // Constants
 const MAX_HISTORY = 20;
 const MAX_RETRY_ATTEMPTS = 3;
 const PASS_THRESHOLD = 7;           // 1–10 scale
 const SUMMARY_MODEL = 'gpt-4o-mini';
-const SUMMARY_MAX_TOKENS = 300;
-const MAX_RECENT_TURNS = 10;
 const PRIMARY_MODEL = 'ft:gpt-4.1-2025-04-14:personal:rolybot:BOJYk0lB';
-const RATING_MODEL = 'gpt-4o-mini';
 const PROMPT_REFINE_MODEL = 'gpt-4o-mini';
 
 async function generateRolybotResponse(client, message, replyContext = '') {
     const userPrompt = message.content;
     const channel = message.channel;
 
-    // 1) Load and format history
+    // 1) System message
+    const systemMessage = generateSystemMessage();
+
+    // 2) Summary of similar messages
+    // a. Load and format history
     let history = [];
     try {
         history = await loadPosts(channel, MAX_HISTORY);
     } catch (err) {
         logger.error('[RolyBot] Failed to load channel history:', err);
     }
-    const formattedHistory = history.map(e =>
-        e.role === 'user'
-            ? { role: 'user', content: `${e.username}: ${e.content}` }
-            : { role: 'assistant', content: e.content }
+    const formattedHistory = history
+        .filter(e => e.content && e.content.trim() !== '')
+        .map(e =>
+            e.role === 'user'
+                ? { role: 'user', content: `${e.username}: ${e.content}` }
+                : { role: 'assistant', content: e.content }
+        );
+
+    // b. Find most similar messages and generate a summary
+    const similarMessagesSummary = await generateSimilarMessagesSummary(
+        userPrompt, 
+        memoryRetriever, 
+        openai
     );
 
-    // 2) System message (with local time)
-    let nowLocal = new Date().toLocaleString("en-US", {
-        dateStyle: "full",
-        timeStyle: "long"
+    // 3) Inject context function tokens
+    const MAX_TOTAL_TOKENS = 6000;
+    const RESERVED_TOKENS = 500;
+    // Start with system message and summary
+    let contextMessages = [systemMessage];
+    if (similarMessagesSummary) contextMessages.push(similarMessagesSummary);
+
+    // 3b) Inject function tokens
+    const contextFunctionMessages = await injectContextFunctionTokens({
+        client,
+        prompt: userPrompt + (similarMessagesSummary?.content || ''),
+        openai,
+        SUMMARY_MODEL
     });
-    const systemMessage = {
-        role: 'system',
-        content: `You are RolyBot, a Discord bot who imitates its creator (RolyBug/jbax1899/Jordan).
-                    You will be given a transcript and then a user prompt.
-                    Write a long and thorough reply. Do not cut your messages too short.
-                    Avoid assistant-style language. Chat casually, stay in character, and use common Discord emoji if appropriate.
-                    If directly responding to another person or bot, ping them (e.g. "I agree @RolyBot! ...").
-                    If there is a websearch result, you MUST include the info given and relevant link(s), and only that info.
-                    To prevent Discord from creating embeddings, do not hyperlink text, and put links within brackets.
-                    Do not act overly pleasant (You are chatting with close friends, not strangers).
-                    Do not reply to yourself.
-                    Current date/time (Local): ${nowLocal}
-                    `.replace(/\s+/g, ' ').trim()
-    };
+    contextMessages.push(...contextFunctionMessages);
 
-    // 3) Cleaning step (summarize + optional function calls)
-    let cleanedMessages = null;
-    let summaryMsg = null;
-
-    for (let attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
-        try {
-            logger.info(`============================================================`);
-            logger.info(`[RolyBot] Cleaning (attempt ${attempt}/${MAX_RETRY_ATTEMPTS})`);
-            logger.info(`============================================================`);
-
-            // Split history into older vs. recent
-            const total = formattedHistory.length;
-            const recent = formattedHistory.slice(-MAX_RECENT_TURNS);
-            const older = formattedHistory.slice(0, total - MAX_RECENT_TURNS);
-
-            // 3a) summarize older
-            if (older.length > 0) {
-                const sumResp = await openai.chat.completions.create({
-                    model: SUMMARY_MODEL,
-                    messages: [
-                        { role: 'system', content: 'Summarize the following within a paragraph:' },
-                        { role: 'user', content: JSON.stringify(older, null, 2) }
-                    ],
-                    max_tokens: SUMMARY_MAX_TOKENS,
-                    temperature: 0.3
-                });
-                summaryMsg = {
-                    role: 'assistant',
-                    content: `Earlier conversation summary:\n${sumResp.choices[0].message.content 
-                                + (replyContext ? `\n\nReplying to: ${replyContext}` : '')}`.trim()
-                };
-            }
-
-            // 3b) gather last turns + prompt
-            const recentTurns = [
-                ...recent,
-                { role: 'user', content: userPrompt }
-            ];
-
-            // 3c) build cleanedMessages
-            cleanedMessages = [
-                systemMessage,
-                ...(summaryMsg ? [{ role:'assistant', content:summaryMsg.content }] : []),
-                ...recentTurns
-              ];
-
-            // 3d) optional function‐calls
-            const tokenSelectorPrompt = [
-                {
-                    role: 'system',
-                    content: `You are tasked with pre-processing a chatlog before it is fed into the main LLM call.
-                            If any of the below functions make sense to use, add them to your output.
-    
-                            Available functions:
-    
-                            [websearch="search query here"]
-                            - Only ONE websearch is allowed at most. Do not include more than one websearch function.
-                            - Include if the prompt asked you to do a web search, for recent news on something, or if extra information may be useful for you to answer (like real-time/current information).
-                            - Only apply to the immediate conversation topic.
-                            - Only include if there is a good reason to do so.
-                            - If looking for recent info, do not include a time period.
-                            - Example: [websearch="apple stock value"]
-    
-                            [sleep="duration in seconds"]
-                            - Only ONE sleep is allowed at most. Do not include more than one sleep function.
-                            - Instructs the bot to stop responding to messages for the given amount of time, and then return to normal.
-                            - Keep duration under 5 minutes.
-    
-                            [context="aboutBot"]
-                            - Include if extra information about the bot would be useful.
-                            - Provides context about the bot, like its name, creator, creation date, featuress, commands, software stack, etc.
-
-                            [context="aboutRolybug"]
-                            - Include if extra information about Rolybug/Jordan/jbax1899 would be useful.
-                            - Provides context like who he is, what he likes, who his friends are, etc.
-    
-                            [context="changelog"]
-                            - Include if extra information about recent changes to the bot's code/functionality would be useful.
-                            `
-                },
-                {
-                    role: 'user',
-                    content: userPrompt
-                }
-            ];
-            const tokenSelResp = await openai.chat.completions.create({
-                model: SUMMARY_MODEL,
-                messages: tokenSelectorPrompt,
-                max_tokens: 32,
-                temperature: 0.0
-            });
-            const tokenString = tokenSelResp.choices[0].message.content.trim();
-            const tokenResults = await processSpecialTokens(client, tokenString);
-
-            // 3e) inject any results
-            for (const [key, data] of Object.entries(tokenResults)) {
-                const header = key[0].toUpperCase() + key.slice(1);
-                const body = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
-                cleanedMessages.push({
-                    role: 'assistant',
-                    content: `${header}:\n${body}`
-                });
-            }
-
-            logger.info(`[RolyBot] cleaning attempt ${attempt} succeeded:`);
-            logger.info(`------------------------------------------------------------`);
-            logger.info(JSON.stringify(cleanedMessages));
-            logger.info(`------------------------------------------------------------`);
-            break;
-        } catch (err) {
-            logger.error(`[RolyBot] cleaning attempt ${attempt} failed:`, err);
-        }
-    }
-    // fallback if all cleaning attempts fail
-    if (!cleanedMessages) {
-        logger.warn('[RolyBot] all cleaning attempts failed, using originalMessages');
-        cleanedMessages = [
-            systemMessage,
-            ...formattedHistory,
-            { role: 'user', content: userPrompt }
-        ];
+    // 4) Add as many recent unique messages as will fit (deduped, token-aware)
+    // Build a set of all message contents already in context (summary, function tokens)
+    const dedupeSet = new Set(contextMessages.map(m => m.content));
+    // Only add recent messages that are not already present
+    const recentUnique = formattedHistory.filter(m => !dedupeSet.has(m.content));
+    // Token-aware padding: keep adding until token budget is hit
+    let totalTokens = contextMessages.reduce((sum, m) => sum + (m.content ? m.content.length : 0), 0); // crude token est
+    for (const msg of recentUnique) {
+        if (totalTokens + (msg.content ? msg.content.length : 0) > (MAX_TOTAL_TOKENS - RESERVED_TOKENS)) break;
+        contextMessages.push(msg);
+        totalTokens += (msg.content ? msg.content.length : 0);
     }
 
-    // 4) POST-STEP: generation + JSON rating + feedback-driven refinement
-    // pull apart cleanedMessages for easy reference
-    const originalSystem = cleanedMessages[0];
-    const restMessages = cleanedMessages.slice(1);
+    // 5) Add user prompt last
+    contextMessages.push({ role: 'user', content: userPrompt });
+
+    // 6) Generate and iteratively refine using rateAndRefinePrompt
+    let promptMessages = [...contextMessages];
     let bestReply = null;
     let bestScore = -Infinity;
-    let promptTweak = null;
     let feedbackHistory = [];
+
+    logger.info('===== FINAL MESSAGES TO LLM =====');
+    logger.info(promptMessages.map(msg => 
+        `[${msg.role.toUpperCase()}] ${msg.content}`
+    ).join('\n\n'));
+    logger.info('===== END FINAL MESSAGES =====');
 
     logger.info(`\n[RolyBot] Generating with ${PRIMARY_MODEL}`);
 
     for (let attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
-        // A) Build genMessages
-        const genMessages = [
-            { role: 'system', content: promptTweak || originalSystem.content },
-            ...restMessages
-        ];
-
-        // B) Generate candidate
+        // Generate candidate
         let candidate;
         try {
             const ft = await openai.chat.completions.create({
                 model: PRIMARY_MODEL,
-                messages: genMessages,
+                messages: promptMessages,
                 temperature: 0.7,
-                max_tokens: 300
+                max_tokens: 600
             });
             candidate = ft.choices[0].message.content.trim();
         } catch (e) {
@@ -206,132 +112,45 @@ async function generateRolybotResponse(client, message, replyContext = '') {
         }
         logger.info(`Candidate (attempt ${attempt}):\n${candidate}`);
 
-        // C) Rate the candidate
-        let score = 0, feedback = "";
-        let ratingResp;
-        try {
-            ratingResp = await openai.chat.completions.create({
-                model: RATING_MODEL,
-                messages: [
-                    {
-                        role: 'system',
-                        content: `
-                                You are a reviewer. You will be given a conversation transcript and a candidate reply.
-                                Return ONLY valid JSON with two keys:
-                                • score: integer 1-10 (higher is better)
-                                • feedback: an example response that incorporates those fixes (e.g. "More like this: <response>").
-                                The most important aspect of the response is to engage with the conversation (from the last message, not the entire transcript) and build upon it.
-                                If a websearch was performed and the results provided, but data was not used, provide the relevant search information/link and demand they be used.
-                                Do not make up any information related to the websearch - Only use the provided websearch data.
-                                `.replace(/\s+/g, ' ').trim()
-                    },
-                    {
-                        role: 'user',
-                        content:
-                            `TRANSCRIPT:\n${JSON.stringify(cleanedMessages, null, 2)}\n\n` +
-                            `CANDIDATE:\n${candidate}\n\n`
-                    }
-                ],
-                temperature: 0.0
-            });
-            const parsed = JSON.parse(ratingResp?.choices[0].message.content || "{}");
-            score = parsed.score || 0;
-            feedback = parsed.feedback || "";
-            feedbackHistory.push({
-                attempt,
-                candidate,
-                score,
-                feedback
-            });
-        } catch (e) {
-            logger.warn("Rating JSON parse failed, falling back to numeric scan");
-            const raw = ratingResp.choices[0].message.content;
-            score = parseFloat(raw.match(/\d+/)?.[0]) || 0;
-            feedback = raw.trim();
-        }
-        logger.info(`Rating (attempt ${attempt}): ${score}/10 — feedback:\n${feedback}`);
-
-        // D) Track best
-        if (score > bestScore) {
-            bestScore = score;
-            bestReply = candidate;
-        }
-        if (score >= PASS_THRESHOLD) {
-            logger.info(`→ Passed threshold (${score}≥${PASS_THRESHOLD})`);
-            break;
-        }
-
-        // E) Refine the system prompt using the feedback
-        const restContent = restMessages.map(m => m.content).join("\n\n");
-        const allFeedbackStr = feedbackHistory.map(f =>
-            `Attempt ${f.attempt} (Candidate: ${f.candidate}\nScore: ${f.score}/10\nFeedback: ${f.feedback})`).join('\n\n');
-        logger.info(`Feedback history:\n${allFeedbackStr}`);
-
-        try {
-            const refine = await openai.chat.completions.create({
-                model: PROMPT_REFINE_MODEL,
-                messages: [
-                    {
-                        role: 'system',
-                        content: `
-                                You are a prompt-engineering assistant.
-                                Improve the *system prompt* so that the next reply will fix the issues listed below.
-                                `.replace(/\s+/g, ' ').trim()
-                    },
-                    {
-                        role: 'user',
-                        content:
-                            `Original system prompt:\n${originalSystem.content}\n\n` +
-                            `Conversation summary:\n${summaryMsg?.content || 'none'}\n\n` +
-                            `Other context:\n${restContent}\n\n` +
-                            `Feedback history for all attempts:\n${allFeedbackStr}\n\n` +
-                            `Output *only* the revised system prompt.`
-                    }
-                ],
-                temperature: 0.0,
-                max_tokens: 200
-            });
-            const newPrompt = refine.choices[0].message.content.trim();
-            if (newPrompt && newPrompt !== promptTweak) {
-                promptTweak = newPrompt;
-                logger.info(`Prompt tweaked for next attempt.`);
-            } else {
-                logger.warn(`Refiner did not change the prompt; aborting further refinements.`);
-                break;
-            }
-        } catch (e) {
-            logger.error(`Refinement failed:`, e);
-            break;
-        }
-    }
-
-    // 5) Update status based on conversation context
-    try {
-        // Build a short context string from your cleanedMessages
-        const contextString = cleanedMessages
-            .map(m => {
-                const who = m.role === 'user' ? 'User' : 'Bot';
-                return `${who}: ${m.content}`;
-            })
-            .join('\n');
-
-        // Ask OpenAI for a new status that “makes sense” in this context
-        const { typeWord, activity, type } = await generateValidStatus(contextString);
-
-        // Push it live
-        await message.client.user.setPresence({
-            activities: [{ name: activity, type }],
-            status: 'online'
+        // Use the new rateAndRefinePrompt for rating and refinement
+        const { score, feedback, revisedPrompt } = await rateAndRefinePrompt({
+            openai,
+            model: PROMPT_REFINE_MODEL,
+            promptMessages,
+            candidate
         });
+        feedbackHistory.push({ candidate, score, feedback });
+        logger.info(`Rating (attempt ${attempt}): ${score}/10
+            Feedback: ${feedback}
+            Revised Prompt: 
+            ${JSON.stringify(revisedPrompt, null, 2)}`);
 
-        logger.info(`[RolyBot] status updated to: ${typeWord} ${activity}`);
-    } catch (err) {
-        logger.error('[RolyBot] Failed to update status:', err);
+        // Track best reply
+        if (score > bestScore) {
+            bestReply = candidate;
+            bestScore = score;
+        }
+
+        // If good enough, break
+        if (score >= PASS_THRESHOLD) {
+            logger.info('High-quality candidate found, stopping early.');
+            break;
+        }
+
+        // Use the revised prompt for the next attempt
+        promptMessages = revisedPrompt;
+        logger.info('Prompt after refinement:', JSON.stringify(promptMessages, null, 2));
     }
 
-    // Finally, return the generated reply
-    return bestReply || "Sorry, I had trouble thinking of a response :(";
-};
+    if (!bestReply) bestReply = "Sorry, I had trouble thinking of a response :(";
+
+    // Return the best candidate and score
+    return {
+        reply: bestReply,
+        score: bestScore,
+        feedbackHistory
+    };
+}
 
 /**
  * Fetches the last MAX_HISTORY messages from the given TextChannel,
