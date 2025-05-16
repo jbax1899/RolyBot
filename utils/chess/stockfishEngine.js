@@ -7,7 +7,7 @@ const path = require('path');
 
 function getStockfishPath() {
     if (process.env.STOCKFISH_PATH) {
-        console.log('[Stockfish Path] Using STOCKFISH_PATH env:', process.env.STOCKFISH_PATH);
+        //console.log('[Stockfish Path] Using STOCKFISH_PATH env:', process.env.STOCKFISH_PATH);
         return process.env.STOCKFISH_PATH;
     }
     const platform = process.platform;
@@ -18,7 +18,7 @@ function getStockfishPath() {
         // On Linux/macOS, rely on system PATH
         resolvedPath = 'stockfish';
     }
-    console.log(`[Stockfish Path] Platform: ${platform}, Resolved: ${resolvedPath}`);
+    //console.log(`[Stockfish Path] Platform: ${platform}, Resolved: ${resolvedPath}`);
     return resolvedPath;
 }
 
