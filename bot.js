@@ -5,6 +5,7 @@ const generateRolybotResponse = require('./utils/rolybotResponse');
 const { loadCommands, executeCommand } = require('./utils/commandLoader');
 const { recordRolybotRequest, tooManyRolybotRequests, goAFK } = require('./utils/openaiHelper');
 const { classifyMessage } = require('./utils/messageClassifier.js');
+const gameManager = require('./utils/chess/gameManager');
 const MemoryRetriever = require('./utils/memoryRetrieval');
 const MemoryManager = require('./utils/memoryManager');
 
@@ -239,7 +240,24 @@ client.on(Events.MessageCreate, async message => {
         }
     }
 
-    const classification = await classifyMessage(message);
+    const classification = await classifyMessage(message.content);
+
+    // Chess command handler (multi-intent)
+    if (classification.chess_commands && Array.isArray(classification.chess_commands)) {
+        const { startGame, resignGame, moveGame, showBoard } = require('./commands/chess');
+        for (const cmd of classification.chess_commands) {
+            if (cmd.command === 'start') {
+                await startGame(message, message.author.id);
+            } else if (cmd.command === 'resign') {
+                await resignGame(message, message.author.id);
+            } else if (cmd.command === 'move' && cmd.move) {
+                await moveGame(message, [cmd.move], message.author.id);
+            } else if (cmd.command === 'show') {
+                await showBoard(message, message.author.id);
+            }
+        }
+        return;
+    }
 
     // 3. React with any emotes given by the classifier.
     if (classification.emotes && Array.isArray(classification.emotes)) {
