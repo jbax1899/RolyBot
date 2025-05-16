@@ -29,6 +29,9 @@ COPY . .
 # Final stage for app image
 FROM base
 
+# Copy Stockfish from build stage
+COPY --from=build /usr/games/stockfish /usr/local/bin/stockfish
+
 # Debug: print stockfish path and version
 RUN which stockfish && stockfish --version
 
