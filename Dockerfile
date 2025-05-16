@@ -31,7 +31,11 @@ FROM base
 
 # Install stockfish in the final image
 RUN apt-get update -qq && \
-    apt-get install --no-install-recommends -y stockfish
+    apt-get install --no-install-recommends -y stockfish && \
+    rm -rf /var/lib/apt/lists/*
+
+# Debug: print stockfish path and version
+RUN which stockfish && stockfish --version
 
 # Copy built application
 COPY --from=build /app /app

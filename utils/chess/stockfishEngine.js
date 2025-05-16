@@ -6,13 +6,20 @@ const { Engine } = require('node-uci');
 const path = require('path');
 
 function getStockfishPath() {
-    if (process.env.STOCKFISH_PATH) return process.env.STOCKFISH_PATH;
-    const platform = process.platform;
-    if (platform === 'win32') {
-        return path.join(__dirname, '../../stockfish/stockfish-windows-x86-64-avx2.exe');
+    if (process.env.STOCKFISH_PATH) {
+        console.log('[Stockfish Path] Using STOCKFISH_PATH env:', process.env.STOCKFISH_PATH);
+        return process.env.STOCKFISH_PATH;
     }
-    // On Linux/macOS, rely on system PATH
-    return 'stockfish';
+    const platform = process.platform;
+    let resolvedPath;
+    if (platform === 'win32') {
+        resolvedPath = path.join(__dirname, '../../stockfish/stockfish-windows-x86-64-avx2.exe');
+    } else {
+        // On Linux/macOS, rely on system PATH
+        resolvedPath = 'stockfish';
+    }
+    console.log(`[Stockfish Path] Platform: ${platform}, Resolved: ${resolvedPath}`);
+    return resolvedPath;
 }
 
 async function getBestMove(fen, thinkTimeMs) {
