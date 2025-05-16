@@ -29,10 +29,6 @@ COPY . .
 # Final stage for app image
 FROM base
 
-# Copy prebuilt Stockfish binary and make it executable
-COPY stockfish/stockfish-linux/stockfish-ubuntu-x86-64-avx2 /usr/local/bin/stockfish
-RUN chmod +x /usr/local/bin/stockfish
-
 # Debug: print stockfish path and version
 RUN which stockfish && stockfish --version
 
