@@ -5,7 +5,6 @@ const generateRolybotResponse = require('./utils/rolybotResponse');
 const { loadCommands, executeCommand } = require('./utils/commandLoader');
 const { recordRolybotRequest, tooManyRolybotRequests, goAFK } = require('./utils/openaiHelper');
 const { classifyMessage } = require('./utils/messageClassifier.js');
-const gameManager = require('./utils/chess/gameManager');
 const MemoryRetriever = require('./utils/memoryRetrieval');
 const MemoryManager = require('./utils/memoryManager');
 
@@ -293,11 +292,19 @@ client.on(Events.MessageCreate, async message => {
                 () => message.channel.sendTyping().catch(() => { }),
                 1000
             );
+
+            // If reply to bot, add reply context
             let msgContent = message.content;
             if (isReplyToBot && repliedTo) {
                 msgContent = `In reply to: ${repliedTo.content}\n${msgContent}`;
             }
-            const response = await generateRolybotResponse(client, message, repliedTo?.content);
+
+            // If in a chess thread, add context
+            let chessRoom = '';
+            if (message.channel && message.channel.type === 11 && message.channel.name && message.channel.name.toLowerCase().includes('chess vs')) {
+                chessRoom = `[in thread: ${message.channel.name.toLowerCase()}]\n`;
+            }
+            const response = await generateRolybotResponse(client, message, (chessRoom + msgContent));
             if (response && response.reply) await message.reply(response.reply);
         } catch (err) {
             logger.error("[RolyBot] generateRolybotResponse error:", err);

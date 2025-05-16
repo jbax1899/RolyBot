@@ -89,39 +89,42 @@ async function generateSimilarMessagesSummary(prompt, memoryRetriever, openai, s
  * @param {string} userPrompt - The original user prompt
  * @returns {Object[]} Prompt messages for token selection
  */
-function generateTokenSelectorPrompt(userPrompt) {
+function generateTokenSelectorPrompt(userPrompt, discordUserId) {
     return [
         {
             role: 'system',
             content: `You are tasked with pre-processing a chatlog before it is fed into the main LLM call.
-                    If any of the below functions make sense to use, add them to your output.
+                If any of the below functions make sense to use, add them to your output.
 
-                    Available functions:
+                Available functions:
 
-                    [websearch="search query here"]
-                    - Only ONE websearch is allowed at most. Do not include more than one websearch function.
-                    - Include if the prompt asked you to do a web search, for recent news on something, or if extra information may be useful for you to answer (like real-time/current information).
-                    - Only apply to the immediate conversation topic.
-                    - Only include if there is a good reason to do so.
-                    - If looking for recent info, do not include a time period.
-                    - Example: [websearch="apple stock value"]
+                [websearch="search query here"]
+                - Only ONE websearch is allowed at most. Do not include more than one websearch function.
+                - Include if the prompt asked you to do a web search, for recent news on something, or if extra information may be useful for you to answer (like real-time/current information).
+                - Only apply to the immediate conversation topic.
+                - Only include if there is a good reason to do so.
+                - If looking for recent info, do not include a time period.
+                - Example: [websearch="apple stock value"]
 
-                    [sleep="duration in seconds"]
-                    - Only ONE sleep is allowed at most. Do not include more than one sleep function.
-                    - Instructs the bot to stop responding to messages for the given amount of time, and then return to normal.
-                    - Keep duration under 5 minutes.
+                [sleep="duration in seconds"]
+                - Only ONE sleep is allowed at most. Do not include more than one sleep function.
+                - Instructs the bot to stop responding to messages for the given amount of time, and then return to normal.
+                - Keep duration under 5 minutes.
 
-                    [context="aboutBot"]
-                    - Include if extra information about the bot would be useful.
-                    - Provides context about the bot, like its name, creator, creation date, features, commands, software stack, etc.
+                [context="aboutBot"]
+                - Include if extra information about yourself (RolyBot) would be useful.
+                - Provides context about the bot, like its name, creator, creation date, features, commands, software stack, etc.
 
-                    [context="aboutRolybug"]
-                    - Include if extra information about Rolybug/Jordan/jbax1899 is required.
-                    - Provides context like who he is, what he likes, who his friends are, etc.
+                [context="aboutRolybug"]
+                - Include if extra information about Rolybug/Jordan/jbax1899 is required.
+                - Provides context like who he is, what he likes, who his friends are, etc.
 
-                    [context="changelog"]
-                    - Include if extra information about recent changes to the bot's code/functionality would be useful.
-                    `
+                [context="changelog"]
+                - Include if extra information about recent changes to the bot's code/functionality would be useful.
+
+                [chess="<discordUserId>"]
+                - Use this to request a summary of the chess game for a Discord user. The ID of the current user is: ${discordUserId}
+                - Example: [chess="${discordUserId}"]`
         },
         {
             role: 'user',
@@ -231,9 +234,9 @@ function buildGenMessages({ userPrompt, formattedHistory, similarMessagesSummary
  * @param {function} processSpecialTokens
  * @returns {Promise<Array>} Array of context messages
  */
-async function injectContextFunctionTokens({ client, userPrompt, openai, SUMMARY_MODEL }) {
+async function injectContextFunctionTokens({ client, userPrompt, openai, SUMMARY_MODEL, discordUserId }) {
     // Use the LLM to select which special tokens to process
-    const tokenSelectorPrompt = generateTokenSelectorPrompt(userPrompt);
+    const tokenSelectorPrompt = generateTokenSelectorPrompt(userPrompt, discordUserId);
     const tokenSelResp = await openai.chat.completions.create({
         model: SUMMARY_MODEL,
         messages: tokenSelectorPrompt,
@@ -255,6 +258,15 @@ async function injectContextFunctionTokens({ client, userPrompt, openai, SUMMARY
                 results[content] = `⚠️ No context found for "${content}"`;
             } else {
                 results[content] = contextData[content];
+            }
+        }
+        else if (type === "chess") {
+            // content is the playerId
+            const chessContext = generateChessContext(content);
+            if (!chessContext) {
+                results["chess"] = `⚠️ No chess game found for player "${content}"`;
+            } else {
+                results["chess"] = chessContext;
             }
         }
         else if (type === "sleep") {
@@ -422,10 +434,54 @@ async function rateAndRefinePrompt({ openai, model, promptMessages, candidate })
     return { score, feedback, revisedPrompt };
 }
 
+// --- Chess Context Generator ---
+const gameManager = require('./chess/gameManager');
+
+/**
+ * Generates a human-readable summary of the chess game for a given playerId.
+ * @param {string} playerId
+ * @returns {string|null}
+ */
+function generateChessContext(playerId) {
+    const game = gameManager.getGame(playerId);
+    if (!game) return null;
+
+    const board = game.board;
+    const turn = board.turn() === 'w' ? 'White' : 'Black';
+    const moveNumber = Math.floor((board.history().length + 1) / 2);
+    const material = getMaterialBalance(board);
+
+    let context = `Current Chess game between RolyBot and the user: `;
+    context += ` - Move number: ${moveNumber}`;
+    context += ` - Player color: ${game.playerColor === 'w' ? 'White' : 'Black'}`;
+    context += ` - Turn: ${turn}`;
+    context += ` - Material: ${material}`;
+
+    logger.info("Chess context generated: " + context);
+
+    return context;
+}
+
+function getMaterialBalance(board) {
+    const pieceValues = { p: 1, n: 3, b: 3, r: 5, q: 9 };
+    let white = 0, black = 0;
+    for (const row of board.board()) {
+        for (const piece of row) {
+            if (!piece) continue;
+            const value = pieceValues[piece.type] || 0;
+            if (piece.color === 'w') white += value;
+            else black += value;
+        }
+    }
+    if (white === black) return 'Even';
+    return white > black ? `White is up ${white - black}` : `Black is up ${black - white}`;
+}
+
 module.exports = {
     generateSystemMessage,
     generateSimilarMessagesSummary,
     generateTokenSelectorPrompt,
+    generateChessContext,
     generateRecentMessagesContext,
     buildGenMessages,
     injectContextFunctionTokens,

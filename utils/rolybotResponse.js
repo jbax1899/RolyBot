@@ -13,14 +13,14 @@ const memoryRetriever = MemoryManager.memoryRetriever;
 
 // Constants
 const MAX_HISTORY = 20;
-const MAX_RETRY_ATTEMPTS = 3;
+const MAX_RETRY_ATTEMPTS = 2;
 const PASS_THRESHOLD = 7;           // 1–10 scale
 const SUMMARY_MODEL = 'gpt-4o-mini';
 const PRIMARY_MODEL = 'ft:gpt-4.1-2025-04-14:personal:rolybot:BOJYk0lB';
 const PROMPT_REFINE_MODEL = 'gpt-4o-mini';
 
 async function generateRolybotResponse(client, message, replyContext = '') {
-    const userPrompt = message.content;
+    const userPrompt = replyContext + message.content;
     const channel = message.channel;
 
     // 1) System message
@@ -57,12 +57,18 @@ async function generateRolybotResponse(client, message, replyContext = '') {
     if (similarMessagesSummary) contextMessages.push(similarMessagesSummary);
 
     // 3b) Inject function tokens
-    const contextFunctionMessages = await injectContextFunctionTokens({
-        client,
-        userPrompt: userPrompt + (similarMessagesSummary?.content || ''),
-        openai,
-        SUMMARY_MODEL
-    });
+    let contextFunctionMessages = [];
+    try {
+        contextFunctionMessages = await injectContextFunctionTokens({
+            client,
+            userPrompt: userPrompt + (similarMessagesSummary?.content || ''),
+            openai,
+            SUMMARY_MODEL,
+            discordUserId: message.author.id
+        });
+    } catch (err) {
+        logger.error('[RolyBot] Failed to inject context function tokens:', err);
+    }
     contextMessages.push(...contextFunctionMessages);
 
     // 4) Add as many recent unique messages as will fit (deduped, token-aware)

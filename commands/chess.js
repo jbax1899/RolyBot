@@ -1,6 +1,8 @@
 const gameManager = require('../utils/chess/gameManager');
 const { Game } = require('../utils/chess/gameManager');
 const logger = require('../utils/logger');
+const threadManager = require('../utils/chess/threadManager');
+const { replyWithThreadLink } = require('../utils/chess/threadManager');
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 const { AttachmentBuilder } = require('discord.js');
 
@@ -12,6 +14,7 @@ module.exports = {
     execute: async (message, args) => {
         try {
             const userId = message.author.id;
+            // Ensure the user's thread exists for all chess actions
             // Handle different commands
             switch (args[0]?.toLowerCase()) {
                 case 'start':
@@ -33,10 +36,19 @@ module.exports = {
     },
 };
 
-async function showBoard(message, userId, msg = '') {
+// Accepts either a Message or a ThreadChannel as the first argument
+async function showBoard(target, userId, msg = '') {
+    let thread;
+    // If it's a ThreadChannel (has .send and .type), use it directly
+    if (target && typeof target.send === 'function' && typeof target.type !== 'undefined') {
+        thread = target;
+    } else {
+        // Otherwise, assume it's a Message and get the thread
+        thread = await threadManager.ensureGameThread(target.client, target, userId);
+    }
     const game = gameManager.getGame(userId);
     if (!game) {
-        await message.channel.send('No active game to show. Start one with `!rb chess start`.');
+        await thread.send('No active game to show. Start one with `!rb chess start`.');
         return;
     }
     const fen = game.board.fen();
@@ -44,14 +56,14 @@ async function showBoard(message, userId, msg = '') {
 
     const response = await fetch(boardImageUrl);
     if (!response.ok) {
-        await message.channel.send('Failed to fetch board image.');
+        await thread.send('Failed to fetch board image.');
         return;
     }
 
     const contentType = response.headers.get('content-type');
     if (!contentType || !contentType.startsWith('image/')) {
         logger.error(`Board image fetch failed. Content-Type: ${contentType}`);
-        await message.channel.send('Failed to fetch a valid board image (service error).');
+        await thread.send('Failed to fetch a valid board image (service error).');
         return;
     }
 
@@ -59,16 +71,21 @@ async function showBoard(message, userId, msg = '') {
     const buffer = Buffer.from(arrayBuffer);
 
     const attachment = new AttachmentBuilder(buffer, { name: 'board.png' });
-    await message.channel.send({
+    const threadResponse = await thread.send({
         content: msg,
         files: [attachment],
     });
+    // If the original target was a Message, send a link
+    if (target && target.id && target.channel && target.author) {
+        await replyWithThreadLink(target, thread, threadResponse);
+    }
 }
 
 // Function to handle starting a new game
 async function startGame(message, userId) {
+    const thread = await threadManager.ensureGameThread(message.client, message, userId);
     if (gameManager.games.has(userId)) {
-        message.channel.send('You already have an active game. You must resign before starting a new one.');
+        await showBoard(message, userId, 'You already have an active game. You must resign before starting a new one.');
         return;
     }
     // Randomly assign player color
@@ -77,9 +94,9 @@ async function startGame(message, userId) {
     gameManager.saveGames();
     if (playerColor === 'b') {
         // Bot plays first move as white
-        await message.channel.sendTyping();
+        await thread.sendTyping();
         let typingInterval = setInterval(() => {
-            message.channel.sendTyping().catch(() => {});
+            thread.sendTyping().catch(() => {});
         }, 5000);
         let aiMoveObj;
         try {
@@ -88,42 +105,43 @@ async function startGame(message, userId) {
             clearInterval(typingInterval);
         }
         // Show the board from Black's perspective, but using the real FEN (not flipped before move)
-        await showBoard(message, userId, `New game started! You are black. Bot played: ${aiMoveObj ? aiMoveObj.san : 'unknown'}\nYour turn!`, true);
+        await showBoard(message, userId, `New game started! You are black. I'll play ${aiMoveObj ? aiMoveObj.san : 'unknown'}. Your turn!`);
     } else {
-        await showBoard(message, userId, `New game started! You are white - Make your move.`, false);
+        await showBoard(message, userId, `New game started! You are white - What's your move?`);
     }
 }
 
 // Function to handle a resignation
 async function resignGame(message, userId) {
+    const thread = await threadManager.ensureGameThread(message.client, message, userId);
     if (gameManager.games.has(userId)) {
         gameManager.games.delete(userId);
         gameManager.saveGames();
-        message.channel.send('You resigned. Game over.');
+        await showBoard(message, userId, 'You resigned. Game over.');
     } else {
-        message.channel.send('You have no active game to resign.');
+        await showBoard(message, userId, 'You have no active game to resign.');
     }
 }
 
 // Function to handle a move
 const { resolveMoveWithLLM, CHESS_MOVE_PARSER_MODEL } = require('../utils/chess/moveParser');
 
-function isUciMove(str) {
-    // UCI: e2e4, g1f3, a7a8q, etc.
-    return /^[a-h][1-8][a-h][1-8][qrbn]?$/i.test(str.trim());
-}
-
-// Function to handle a move
 async function moveGame(message, args, userId) {
+    if (!message || !message.channel) {
+        logger.error('[moveGame] Invalid message or missing channel:', message);
+        throw new Error('Cannot process move: message or channel is undefined.');
+    }
+
+    const thread = await threadManager.ensureGameThread(message.client, message, userId);
     const game = gameManager.getGame(userId);
     if (!game) {
-        await message.channel.send('No active game to move in.');
+        await showBoard(message, userId, 'No active game to move in.');
         return;
     }
     // Only allow move if it's the player's turn
     const isPlayersTurn = (game.playerColor === 'w' && game.board.turn() === 'w') || (game.playerColor === 'b' && game.board.turn() === 'b');
     if (!isPlayersTurn) {
-        await message.channel.send("It's not your turn!");
+        await showBoard(message, userId, "It's not your turn!");
         return;
     }
     // Parse the move from the user's input
@@ -140,39 +158,48 @@ async function moveGame(message, args, userId) {
         // Not UCI, try to resolve with LLM
         moveToPlay = await resolveMoveWithLLM(moveInput, legalMoves, game.board.fen());
         if (!moveToPlay) {
-            await message.channel.send('Sorry, I could not interpret your move. Please use standard notation or try to be more specific.');
+            await showBoard(message, userId, 'Sorry, I could not interpret your move. Please use standard notation or try to be more specific.');
             return;
         }
     }
     try {
+        // Try the player's move first
         const playerMoveObj = await gameManager.makeMove(userId, moveToPlay);
-        // While the AI is thinking, show typing...
-        await message.channel.sendTyping();
+        // Now, AI move in a separate try/catch
+        await thread.sendTyping();
         let typingInterval = setInterval(() => {
-            message.channel.sendTyping().catch(() => {});
+            thread.sendTyping().catch(() => {});
         }, 5000);
         let aiMoveObj;
         try {
             aiMoveObj = await gameManager.makeAIMove(userId);
-        } finally {
+        } catch (aiError) {
             clearInterval(typingInterval);
+            logger.error(`[Chess] AI move failed: ${aiError.message}`);
+            await showBoard(message, userId, `You played: ${playerMoveObj ? playerMoveObj.san : moveToPlay}\nBut I couldn't make a move: ${aiError.message}`);
+            return;
         }
-        // Respond with a single message including the player's move (SAN), bot's move (SAN), and the updated board image
+        clearInterval(typingInterval);
         await showBoard(message, userId, `You played: ${playerMoveObj ? playerMoveObj.san : moveToPlay}\nI'll play: ${aiMoveObj ? aiMoveObj.san : 'unknown'}`);
     } catch (error) {
-        // Always show the friendly message for no active game
         if (error.message && error.message.toLowerCase().includes('no active game')) {
-            await message.channel.send('Are you wanting to play chess with me? If so, you can start a game with `!rb chess start`');
+            await showBoard(message, userId, 'Are you wanting to play chess with me? If so, you can start a game with `!rb chess start`');
             return;
         }
-        // Distinguish between illegal and other errors
-        if (error.message && error.message.toLowerCase().includes('invalid move')) {
-            await message.channel.send('That move is illegal.');
+        else if (error.message && error.message.toLowerCase().includes('invalid move')) {
+            await showBoard(message, userId, 'That move is illegal.');
             return;
         }
-        // Only show 'Invalid move' for other errors
-        await message.channel.send('Invalid move. Please try again.');
+        else if (error.message) {
+            logger.warn(`[Chess] Move failed: ${error.message}`);
+        }
+        await showBoard(message, userId, 'Invalid move. Please try again.');
     }
+}
+
+function isUciMove(str) {
+    // UCI: e2e4, g1f3, a7a8q, etc.
+    return /^[a-h][1-8][a-h][1-8][qrbn]?$/i.test(str.trim());
 }
 
 function getBoardImageUrl(fen) {
