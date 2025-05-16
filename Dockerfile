@@ -17,7 +17,7 @@ FROM base AS build
 
 # Install packages needed to build node modules
 RUN apt-get update -qq && \
-    apt-get install --no-install-recommends -y build-essential node-gyp pkg-config python-is-python3 stockfish
+    apt-get install --no-install-recommends -y build-essential node-gyp pkg-config python-is-python3
 
 # Install node modules
 COPY package-lock.json package.json ./
@@ -28,6 +28,10 @@ COPY . .
 
 # Final stage for app image
 FROM base
+
+# Install stockfish in the final image
+RUN apt-get update -qq && \
+    apt-get install --no-install-recommends -y stockfish
 
 # Copy built application
 COPY --from=build /app /app
