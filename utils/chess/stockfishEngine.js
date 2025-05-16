@@ -13,7 +13,7 @@ function getStockfishPath() {
     const platform = process.platform;
     let resolvedPath;
     if (platform === 'win32') {
-        resolvedPath = path.join(__dirname, '../../stockfish/stockfish-windows-x86-64-avx2.exe');
+        resolvedPath = path.join(__dirname, '../../stockfish/stockfish-windows/stockfish-windows-x86-64-avx2.exe');
     } else {
         // On Linux/macOS, rely on system PATH
         resolvedPath = 'stockfish';

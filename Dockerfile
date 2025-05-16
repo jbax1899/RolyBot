@@ -29,10 +29,9 @@ COPY . .
 # Final stage for app image
 FROM base
 
-# Install stockfish in the final image
-RUN apt-get update -qq && \
-    apt-get install --no-install-recommends -y stockfish && \
-    rm -rf /var/lib/apt/lists/*
+# Copy prebuilt Stockfish binary and make it executable
+COPY stockfish/stockfish-linux /usr/local/bin/stockfish
+RUN chmod +x /usr/local/bin/stockfish
 
 # Debug: print stockfish path and version
 RUN which stockfish && stockfish --version
