@@ -6,39 +6,25 @@
 
 ## 🚀 Features
 
-### Conversational AI
-- Uses OpenAI's GPT-4o-mini and fine-tuned GPT-4 models for contextually rich, human-like replies.
+- **Conversational AI:** Emulates my style using GPT-4o-mini and fine-tuned GPT-4.
+- **Interactive Chess:** Play chess in Discord threads, with AI (Stockfish) and natural move input.
+- **Memory:** Fast, RAM-only, in-memory context; no persistent storage.
+- **Smart Context:** Prioritized, deduplicated, and token-aware context for responses.
+- **Commands:** `!rb <command>` for help, status, debug, chess, memory, and more.
+- **Spam Control:** Rate limits and AFK mode to prevent flooding.
+- **Logging:** Detailed error and context logs for troubleshooting.
 
-### Dynamic Memory & Context Management
-- Maintains a rolling in-memory store of recent and relevant messages.
-- Advanced similarity search (cosine, Jaccard, Levenshtein) to retrieve and summarize relevant past conversations.
-- Injects system prompts, recent context, and function-based context into each reply.
-- Deduplicates and prioritizes context to fit within model token limits.
+---
 
-### Command System
-- Modular command loader (`!rb <command>`) with commands such as:
-  - `help`: Lists all available commands with descriptions.
-  - `status`: Generates and sets a new bot status using AI.
-  - `debug`: Shows bot diagnostics (uptime, memory usage, etc.).
-  - `chess`: Play chess with the bot (start/resign/move).
-  - `memory`: Summarizes and displays bot's memory state.
+## ♟️ Chess
 
-### Message Classification & Filtering
-- Classifies incoming messages to decide whether to respond or react with emotes.
-- Responds only to relevant messages, reducing spam.
-- Can react with Unicode or custom Discord emojis.
-
-### AFK & Rate Limiting
-- Detects and prevents prompt flooding by going AFK after too many requests.
-- Responds with a friendly AFK message and blocks further requests temporarily.
-
-### Self-Reflection & Diagnostics
-- Provides debug info on demand (uptime, memory usage, OpenAI stats).
-- Logs detailed context management, memory retrieval, and error states.
-
-### Extensible Context Sources
-- Can pull static context from a JSON file ([context.json](cci:7://file:///c:/Users/Jordan/My%20Drive/Jordan/Programming/RolyBot/utils/context.json:0:0-0:0)) for facts about itself, its creator, or other reference data.
-- Designed to easily integrate additional context functions or plugins.
+- Start a game: `!rb chess start`
+- Move: `!rb chess move e4` (or just chat in plain English)
+- Show board: `!rb chess show`
+- Resign: `!rb chess resign`
+- Each game runs automatically in a personal thread.
+- Bot has context about the game state and can chat about it.
+- AI uses Stockfish with adjustable difficulty.
 
 ---
 
@@ -46,26 +32,28 @@
 
 - **Node.js** with **Discord.js** for bot framework and event handling.
 - **OpenAI API** for language model completions and status generation.
-- **In-memory RAM-based memory system** for fast, ephemeral context management (no persistent storage).
-- **Natural language processing** (via `natural` package) for similarity and filtering.
-- **Comprehensive logging** using `winston`.
+- **RAM-only memory system** for fast, ephemeral, and ToS-compliant context management (no persistent storage, all in-memory).
+- **Multi-algorithm similarity search** (cosine, Jaccard, Levenshtein) and dynamic summarization for memory/context retrieval.
+- **Token-aware and deduplicated context management** for efficient prompt construction.
+- **Comprehensive logging and diagnostics** using `winston` and custom debug tools.
 
 ---
 
 ## ⚙️ Design Principles
 
-- **Contextual Awareness:** Always responds with the most relevant, recent, and non-redundant information.
-- **Compliance:** All memory and context storage is in-memory only, complying with Discord TOS.
-- **Robust Error Handling:** Extensive error handling and logging for all major subsystems.
+- **Contextual Awareness:** Always responds with the most relevant, recent, and non-redundant information, using prioritized and deduplicated context.
+- **Strict Discord ToS Compliance:** All memory and context storage is in-memory only; no persistent storage of user data.
+- **Robust Error Handling & Diagnostics:** Extensive error handling, logging, and diagnostics for all major subsystems, including memory and context.
+- **Fallback & Resilience:** Prioritized channel loading with comprehensive fallback mechanisms to ensure reliable memory initialization.
 - **Extensibility:** Modular command and context system for easy addition of new features.
 
 ---
 
 ## 💡 Example Use Cases
 
-- Emulates its creator in conversation, providing a personal touch.
-- Summarizes and recalls past relevant discussions.
-- Plays chess interactively with users.
+- Emulates me in conversation, providing a personal touch.
+- Recalls past relevant discussions with advanced similarity search and dynamic summarization.
+- Plays chess interactively with users in dedicated threads, with AI-powered moves and natural language input.
 - Provides up-to-date status and diagnostics for maintainers.
 - Handles high-load situations gracefully with AFK and rate limiting.
 
