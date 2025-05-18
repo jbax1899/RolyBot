@@ -2,6 +2,8 @@
 
 **RolyBot** is a context-aware Discord chatbot designed to emulate its creator in both writing and interaction style. It leverages OpenAI's GPT models and an in-memory context/memory system to provide highly relevant, dynamic responses.
 
+![image](https://github.com/user-attachments/assets/a2502d53-2cda-4353-95e2-226f79272d05)
+
 ---
 
 ## 🚀 Features
