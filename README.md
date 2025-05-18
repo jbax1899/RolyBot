@@ -12,7 +12,6 @@
 - **Smart Context:** Prioritized, deduplicated, and token-aware context for responses.
 - **Commands:** `!rb <command>` for help, status, debug, chess, memory, and more.
 - **Spam Control:** Rate limits and AFK mode to prevent flooding.
-- **Logging:** Detailed error and context logs for troubleshooting.
 
 ---
 
@@ -26,6 +25,8 @@
 - Bot has context about the game state and can chat about it.
 - AI uses Stockfish with adjustable difficulty.
 
+![Image showcasing back and forth chess play with the bot, and the bot commenting on the state of the game](https://github.com/user-attachments/assets/869f58ca-cf5d-4345-8723-c1884d90326f)
+
 ---
 
 ## 🛠️ Technical Stack
@@ -35,7 +36,6 @@
 - **RAM-only memory system** for fast, ephemeral, and ToS-compliant context management (no persistent storage, all in-memory).
 - **Multi-algorithm similarity search** (cosine, Jaccard, Levenshtein) and dynamic summarization for memory/context retrieval.
 - **Token-aware and deduplicated context management** for efficient prompt construction.
-- **Comprehensive logging and diagnostics** using `winston` and custom debug tools.
 
 ---
 
@@ -54,7 +54,6 @@
 - Emulates me in conversation, providing a personal touch.
 - Recalls past relevant discussions with advanced similarity search and dynamic summarization.
 - Plays chess interactively with users in dedicated threads, with AI-powered moves and natural language input.
-- Provides up-to-date status and diagnostics for maintainers.
 - Handles high-load situations gracefully with AFK and rate limiting.
 
 ---
