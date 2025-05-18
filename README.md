@@ -10,8 +10,10 @@
 - **Interactive Chess:** Play chess in Discord threads, with AI (Stockfish) and natural move input.
 - **Memory:** Fast, RAM-only, in-memory context; no persistent storage.
 - **Smart Context:** Prioritized, deduplicated, and token-aware context for responses.
-- **Commands:** `!rb <command>` for help, status, debug, chess, memory, and more.
 - **Spam Control:** Rate limits and AFK mode to prevent flooding.
+- **Web Search:** Automatically performs web searches for extra context as needed.
+
+![image](https://github.com/user-attachments/assets/7542c526-710e-4673-92c1-d378f7ebd3bd)
 
 ---
 
