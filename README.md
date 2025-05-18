@@ -13,7 +13,7 @@
 - **Spam Control:** Rate limits and AFK mode to prevent flooding.
 - **Web Search:** Automatically performs web searches for extra context as needed.
 
-![image](https://github.com/user-attachments/assets/7542c526-710e-4673-92c1-d378f7ebd3bd)
+![image](https://github.com/user-attachments/assets/a4635496-877c-4e01-8da5-14c748715788)
 
 ---
 
