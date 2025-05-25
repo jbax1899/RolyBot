@@ -1,14 +1,28 @@
-const { setPresence } = require('../utils/openaiHelper');
+const { SlashCommandBuilder } = require('discord.js');
+const { setPresence } = require('../utils/openaiHelper.js');
 
 module.exports = {
     name: 'status',
-    description: 'Generates and sets a new status for the bot.',
-    execute: async (message, args) => {
+    data: new SlashCommandBuilder()
+        .setName('status')
+        .setDescription('Update or show the bot status'),
+    async execute(ctx, ...args) {
+        const isInteraction = ctx.isCommand && typeof ctx.isCommand === 'function' ? ctx.isCommand() : ctx.commandName !== undefined;
+        const interaction = isInteraction ? ctx : null;
+        const message = !isInteraction ? ctx : null;
         try {
-            const status = await setPresence(message.client);
-            message.channel.send(`✅ Status updated to: **${status}**`);
+            const status = await setPresence(isInteraction ? interaction.client : message.client);
+            if (interaction) {
+                await interaction.reply({ content: `✅ Status updated to: **${status}**`, flags: 64 });
+            } else if (message) {
+                await message.reply(`✅ Status updated to: **${status}**`);
+            }
         } catch (error) {
-            message.channel.send('⚠️ An error occurred while updating the status.');
+            if (interaction) {
+                await interaction.reply({ content: '⚠️ An error occurred while updating the status.', flags: 64 });
+            } else if (message) {
+                await message.reply('⚠️ An error occurred while updating the status.');
+            }
         }
     }
 };

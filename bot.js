@@ -1,15 +1,17 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, Events } = require('discord.js');
+const { Client, GatewayIntentBits, Events, EmbedBuilder } = require('discord.js');
 const logger = require('./utils/logger');
-const generateRolybotResponse = require('./utils/rolybotResponse');
-const { loadCommands, executeCommand } = require('./utils/commandLoader');
+const { generateRolybotResponse, loadPosts } = require('./utils/rolybotResponse');
+const { executeCommand, registerSlashCommands, slashCommands } = require('./utils/commandLoader');
+const { REST, Routes } = require('discord.js');
 const { recordRolybotRequest, tooManyRolybotRequests, goAFK } = require('./utils/openaiHelper');
 const { classifyMessage } = require('./utils/messageClassifier.js');
+const gameManager = require('./utils/chess/gameManager');
 const MemoryRetriever = require('./utils/memoryRetrieval');
 const MemoryManager = require('./utils/memoryManager');
 
-const COMMAND_PREFIX = process.env.COMMAND_PREFIX || '!rb';
 const token = process.env.DISCORD_BOT_TOKEN;
+const AFK_TIMEOUT = 10;
 
 // Memory Initialization Configuration
 const MEMORY_CONFIG = {
@@ -95,11 +97,16 @@ loginWithRetry().catch(err => {
     process.exit(1);
 });
 
-// Load all !rb commands from /commands
-loadCommands();
-
 // Client ready event - initialize memories and set up message handling
 client.once(Events.ClientReady, async () => {
+    // Register slash commands with Discord globally
+    try {
+        await registerSlashCommands(client.user.id, token);
+        logger.info('Slash commands registered globally');
+    } catch (error) {
+        logger.error('Failed to register slash commands:', error);
+    }
+
     // Initialize global memory retriever via centralized manager
     const memoryRetriever = MemoryManager.initialize({
         priorityChannelIds: MEMORY_CONFIG.PRIORITY_CHANNELS,
@@ -198,33 +205,38 @@ client.once(Events.ClientReady, async () => {
         });
 });
 
+// Handle slash command interactions
+client.on(Events.InteractionCreate, async interaction => {
+    logger.info(`[SlashCmd] Received interaction: ${interaction.commandName}`);
+    if (!interaction.isCommand()) return;
+    const command = slashCommands.get(interaction.commandName);
+    if (!command) return;
+    logger.info(`[SlashCmd] Executing command: ${interaction.commandName}`);
+    try {
+        await command.execute(interaction);
+        logger.info(`[SlashCmd] Command executed successfully: ${interaction.commandName}`);
+    } catch (error) {
+        logger.error(`[SlashCmd] Error executing /${interaction.commandName}:`, error);
+        await interaction.reply({ content: 'There was an error executing that command!', flags: 64 });
+    }
+});
+
 // Handle incoming messages
 client.on(Events.MessageCreate, async message => {
+    if (message.content.startsWith('/')) return; // Ignore slash commands (handled by interactionCreate)
+
     if (message.author.id === client.user.id) return; // Ignore self
 
     const content = message.content.trim();
 
-    // Handle Commands (!rb)
-    if (content.startsWith(COMMAND_PREFIX)) {
-        const parts = content.slice(COMMAND_PREFIX.length).trim().split(/\s+/);
-        const commandName = parts.shift().toLowerCase();
-        try {
-            await executeCommand(commandName, message, parts);
-        } catch (err) {
-            logger.error(`Error executing command "${commandName}":`, err);
-            await message.reply('⚠️ Something went wrong running that command.');
-        }
-        return;
-    }
-
     // Handle RolyBot responses
-    // 1. If AFK, break.
+    // 1. If AFK, break
     if (rolybotAFK) {
         logger.info("[RolyBot] AFK/rate limited - ignoring trigger.");
         return;
     }
 
-    // 2. Run the classifier.
+    // 2. Run the classifier
     let isReplyToBot = false;
     let repliedTo = null;
     if (message.reference?.messageId) {
@@ -235,28 +247,58 @@ client.on(Events.MessageCreate, async message => {
                 repliedTo = original;
             }
         } catch (err) {
-            logger.warn("[RolyBot] could not fetch referenced message:", err);
+            logger.warn("[RolyBot] Could not fetch referenced message:", err);
         }
     }
-
-    const classification = await classifyMessage(message.content);
-
-    // Chess command handler (multi-intent)
-    if (classification.chess_commands && Array.isArray(classification.chess_commands)) {
-        const { startGame, resignGame, moveGame, showBoard } = require('./commands/chess');
-        for (const cmd of classification.chess_commands) {
-            if (cmd.command === 'start') {
-                await startGame(message, message.author.id);
-            } else if (cmd.command === 'resign') {
-                await resignGame(message, message.author.id);
-            } else if (cmd.command === 'move' && cmd.move) {
-                await moveGame(message, [cmd.move], message.author.id);
-            } else if (cmd.command === 'show') {
-                await showBoard(message, message.author.id);
-            }
-        }
-        return;
+    // Get recent messages for context
+    let messageHistory = [];
+    try {
+        // Load recent messages (excluding current one)
+        const recentMessages = await loadPosts(message.channel, 3);
+        
+        // Convert to the format expected by classifyMessage
+        messageHistory = recentMessages.map(msg => ({
+            author: msg.username,
+            content: msg.content,
+            isBot: msg.isBot || false
+        }));
+    } catch (err) {
+        logger.warn("[RolyBot] Could not fetch message history:", err);
     }
+
+    // Prepare classification input
+    const classificationInput = {
+        content: message.content,
+        author: message.author.username,
+        isBot: message.author.bot,
+        isReply: !!message.reference,
+        messageHistory
+    };
+    
+    // Log detailed input
+    const inputDetails = `Content: ${message.content}\n` +
+        `Author: ${message.author.username} (Bot: ${message.author.bot})\n` +
+        `Is Reply: ${!!message.reference}\n` +
+        `Message History (${messageHistory.length}):\n` +
+        messageHistory.map((m, i) => 
+            `  ${i + 1}. ${m.isBot ? 'BOT' : 'USER'} ${m.author}: ${m.content.substring(0, 50)}${m.content.length > 50 ? '...' : ''}`
+        ).join('\n');
+    
+    logger.info(`Classification Input:\n${inputDetails}`);
+    
+    // Get classification
+    const classification = await classifyMessage(classificationInput);
+    
+    // Log detailed output
+    const outputDetails = `Input Length: ${message.content.length}\n` +
+        `Input Preview: ${message.content.substring(0, 100)}${message.content.length > 100 ? '...' : ''}\n` +
+        `Output: ${JSON.stringify(classification, null, 2)}\n` +
+        `Has Respond: ${'respond' in classification}\n` +
+        `Has Message: ${'message' in classification}\n` +
+        `Has Emotes: ${!!(classification.emotes && classification.emotes.length > 0)}\n` +
+        `Has Chess Commands: ${!!(classification.chess_commands && classification.chess_commands.length > 0)}`;
+    
+    logger.info(`Classification Output:\n${outputDetails}`);
 
     // 3. React with any emotes given by the classifier.
     if (classification.emotes && Array.isArray(classification.emotes)) {
@@ -269,48 +311,136 @@ client.on(Events.MessageCreate, async message => {
         }
     }
 
-    // 4. If direct reply to bot OR classifier says send a message, send the message.
-    if (isReplyToBot || classification.message) {
-        if (rolybotBusy) {
-            logger.info("[RolyBot] currently busy - ignoring trigger.");
-            return;
-        }
-        recordRolybotRequest();
-        if (tooManyRolybotRequests()) {
-            logger.info("[RolyBot] rate limited - ignoring trigger.");
-            if (!rolybotAFK) {
-                await goAFK(client, 60, message, setAFK);
+    // 4. Handle chess commands if present
+    if (classification.chess_commands) {
+        const chessCommands = classification.chess_commands;
+        
+        // Process each chess command in order
+        for (const cmd of chessCommands) {
+            try {
+                if (cmd.command === 'move') {
+                    // Make the move
+                    try {
+                        await message.channel.send('Calculating move...');
+                        const moveObj = await gameManager.makeMove(message.author.id, cmd.move);
+                        const game = gameManager.getGame(message.author.id);
+                        const boardImageUrl = await gameManager.getBoardImageUrl(game.board.fen());
+                        
+                        // Create embed with move and board
+                        const moveEmbed = new EmbedBuilder()
+                            .setTitle('Chess Board')
+                            .setColor(0x5865F2) // Discord blue
+                            .setImage(boardImageUrl)
+                            .setDescription(`Your move: ${moveObj.san}`);
+                        
+                        // Send the embed
+                        await message.channel.send({ embeds: [moveEmbed] });
+                    } catch (err) {
+                        logger.error(`[Chess] Error making move: ${err.message}`);
+                        await message.channel.send('Invalid move. Please try again.');
+                    }
+                } else if (cmd.command === 'resign') {
+                    // Handle resignation
+                    try {
+                        const game = gameManager.getGame(message.author.id);
+                        if (!game) {
+                            await message.channel.send('You do not have an active game to resign from.');
+                            return;
+                        }
+                        
+                        // Get opponent's ID
+                        const opponentGame = gameManager.getOpponentGame(message.author.id);
+                        const opponentId = opponentGame?.opponent;
+                        
+                        // End the game
+                        gameManager.removeGame(message.author.id);
+                        if (opponentId) {
+                            gameManager.removeGame(opponentId);
+                        }
+                        
+                        // Send resignation message
+                        const resignMessage = opponentId 
+                            ? `<@${message.author.id}> has resigned the game against <@${opponentId}>.`
+                            : `<@${message.author.id}> has resigned the game.`;
+                            
+                        await message.channel.send(resignMessage);
+                        
+                        // Clean up thread if it exists
+                        try {
+                            const threadId = game.threadId || (opponentGame?.threadId);
+                            if (threadId) {
+                                const thread = await message.guild.channels.fetch(threadId);
+                                if (thread) {
+                                    await thread.send(resignMessage);
+                                    // Optionally archive the thread
+                                    await thread.setArchived(true).catch(e => logger.error('Error archiving thread:', e));
+                                }
+                            }
+                        } catch (threadError) {
+                            logger.error('Error cleaning up thread after resignation:', threadError);
+                        }
+                    } catch (error) {
+                        logger.error('[Chess] Error processing resignation:', error);
+                        await message.channel.send('An error occurred while processing your resignation.');
+                    }
+                }
+            } catch (err) {
+                logger.error(`[Chess] Error handling command ${cmd.command}: ${err.message}`);
+                await message.channel.send('Error processing chess command. Please try again.');
             }
-            return;
         }
-
-        rolybotBusy = true;
-        let typingInterval;
-        try {
-            await message.channel.sendTyping();
-            typingInterval = setInterval(
-                () => message.channel.sendTyping().catch(() => { }),
-                1000
-            );
-
-            // If reply to bot, add reply context
-            let msgContent = message.content;
-            if (isReplyToBot && repliedTo) {
-                msgContent = `In reply to: ${repliedTo.content}\n${msgContent}`;
-            }
-
-            // If in a chess thread, add context
-            let chessRoom = '';
-            if (message.channel && message.channel.type === 11 && message.channel.name && message.channel.name.toLowerCase().includes('chess vs')) {
-                chessRoom = `[in thread: ${message.channel.name.toLowerCase()}]\n`;
-            }
-            const response = await generateRolybotResponse(client, message, (chessRoom + msgContent));
-            if (response && response.reply) await message.reply(response.reply);
-        } catch (err) {
-            logger.error("[RolyBot] generateRolybotResponse error:", err);
-        } finally {
-            clearInterval(typingInterval);
-            rolybotBusy = false;
-        }
+        return;
     }
+
+    if (rolybotBusy) {
+        logger.info("[RolyBot] currently busy - ignoring trigger.");
+        return;
+    }
+
+    // Check if we should respond
+    if (!classification.respond // Classification indicates no response needed
+            && !isReplyToBot) { // Not a reply to the bot
+        //logger.info("[RolyBot] Classification indicates no response needed");
+        return;
+    }
+
+    recordRolybotRequest();
+    
+    if (tooManyRolybotRequests()) {
+        logger.info("[RolyBot] rate limited - ignoring trigger.");
+        if (!rolybotAFK) {
+            await goAFK(client, AFK_TIMEOUT, message, setAFK);
+        }
+        return;
+    }
+
+    rolybotBusy = true;
+    let typingInterval;
+    try {
+        await message.channel.sendTyping();
+        typingInterval = setInterval(
+            () => message.channel.sendTyping().catch(() => { }),
+            1000
+        );
+
+        // If reply to bot, add reply context
+        let msgContent = message.content;
+        if (isReplyToBot && repliedTo) {
+            msgContent = `In reply to: ${repliedTo.content}\n${msgContent}`;
+        }
+
+        // If in a chess thread, add context
+        let chessRoom = '';
+        if (message.channel && message.channel.type === 11 && message.channel.name && message.channel.name.toLowerCase().includes('chess vs')) {
+            chessRoom = `[in thread: ${message.channel.name.toLowerCase()}]\n`;
+        }
+        const response = await generateRolybotResponse(client, message, (chessRoom + msgContent));
+        if (response) await message.reply(response);
+    } catch (err) {
+        logger.error("[RolyBot] generateRolybotResponse error:", err);
+    } finally {
+        clearInterval(typingInterval);
+        rolybotBusy = false;
+    }
+    // --- End RolyBot chatbot logic ---
 });

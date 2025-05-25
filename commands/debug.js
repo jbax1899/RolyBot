@@ -1,9 +1,16 @@
-const { EmbedBuilder } = require('discord.js');
+const { EmbedBuilder, SlashCommandBuilder } = require('discord.js');
 
 module.exports = {
     name: 'debug',
+    data: new SlashCommandBuilder()
+        .setName('debug')
+        .setDescription('Debug command for troubleshooting'),
     description: 'Shows bot diagnostics and last OpenAI usage stats.',
-    execute: async (message, args) => {
+    execute: async (ctx, ...args) => {
+        const isInteraction = ctx.isCommand && typeof ctx.isCommand === 'function' ? ctx.isCommand() : ctx.commandName !== undefined;
+        const interaction = isInteraction ? ctx : null;
+        const message = !isInteraction ? ctx : null;
+
         const uptimeSec = Math.floor(process.uptime());
         const memoryUsage = process.memoryUsage();
 

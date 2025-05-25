@@ -1,32 +1,12 @@
-const fs = require('fs');
-const path = require('path');
-const { ThreadAutoArchiveDuration, ChannelType } = require('discord.js');
+const { ThreadAutoArchiveDuration, ChannelType, PermissionsBitField, VoiceChannel } = require('discord.js');
 const logger = require('../logger');
+const threadUtils = require('./threadUtils');
 
-const THREADS_PATH = path.join(__dirname, 'gameThreads.json');
+// This will be set by the game manager to avoid circular dependencies
+let threadUtilsInstance = null;
 
-function loadThreads() {
-    if (!fs.existsSync(THREADS_PATH)) return {};
-    try {
-        return JSON.parse(fs.readFileSync(THREADS_PATH, 'utf8'));
-    } catch (err) {
-        return {};
-    }
-}
-
-function saveThreads(threads) {
-    fs.writeFileSync(THREADS_PATH, JSON.stringify(threads, null, 2));
-}
-
-function getThreadIdForUser(userId) {
-    const threads = loadThreads();
-    return threads[userId] || null;
-}
-
-function setThreadIdForUser(userId, threadId) {
-    const threads = loadThreads();
-    threads[userId] = threadId;
-    saveThreads(threads);
+function setThreadUtils(instance) {
+    threadUtilsInstance = instance;
 }
 
 /**
@@ -141,9 +121,112 @@ async function replyWithThreadLink(originalMessage, thread, threadResponse) {
     }
 }
 
+/**
+ * Creates a public thread for a chess match between two players.
+ * @param {Client} client - Discord.js client
+ * @param {Guild} guild - Discord.js guild
+ * @param {string} whiteId - Discord.js user ID (white)
+ * @param {string} blackId - Discord.js user ID (black)
+ * @returns {Promise<ThreadChannel>} The created thread
+ */
+async function createGameThread(client, guild, whiteId, blackId) {
+    const channel = guild.channels.cache.find(c => c.name === 'bot-arena');
+    if (!channel) {
+        throw new Error('Could not find bot-arena channel');
+    }
+
+    // Get user objects for both players
+    const whiteUser = await client.users.fetch(whiteId);
+    const blackUser = await client.users.fetch(blackId);
+
+    // Create thread with both players' usernames
+    const thread = await channel.threads.create({
+        name: `♟️ ${whiteUser.username} vs ${blackUser.username}`,
+        autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek,
+        type: ChannelType.PublicThread,
+        reason: `Chess game between ${whiteUser.tag} and ${blackUser.tag}`
+    });
+
+    // Add both players to the thread
+    await thread.members.add(whiteId);
+    await thread.members.add(blackId);
+
+    setThreadIdForUser(whiteId, thread.id);
+    setThreadIdForUser(blackId, thread.id);
+
+    return thread;
+}
+
+// Add function to release voice channel when a game ends
+function releaseVoiceChannel(threadId) {
+    const threads = loadThreads();
+    if (threads[threadId] && threads[threadId].voiceChannelId) {
+        delete threads[threadId].voiceChannelId;
+        saveThreads(threads);
+        return true;
+    }
+    return false;
+}
+
+async function setupVoiceChannel(thread, guild) {
+    try {
+        const threads = loadThreads();
+        // Check if any game is currently using voice chat
+        const activeVoiceChannel = Object.values(threads).find(t => t.voiceChannelId);
+        if (activeVoiceChannel) {
+            return null; // Voice chat is in use
+        }
+
+        // Find an available voice channel
+        const availableChannel = guild.channels.cache.find(
+            c => c.type === 2 && // GuildVoice
+            !Object.values(threads).some(t => t.voiceChannelId === c.id)
+        );
+
+        if (!availableChannel) {
+            return null; // No available channels
+        }
+
+        // Set up permissions
+        await availableChannel.permissionOverwrites.edit(guild.roles.everyone, {
+            ViewChannel: true,
+            Connect: true,
+            Speak: true
+        });
+
+        // Join the channel
+        const connection = await availableChannel.join();
+        if (!connection) {
+            throw new Error('Failed to join voice channel');
+        }
+
+        // Claim the channel
+        claimVoiceChannel(thread.id, availableChannel.id);
+        return availableChannel;
+    } catch (error) {
+        logger.error(`[ThreadManager] Error setting up voice channel: ${error.message}`);
+        return null;
+    }
+}
+
+function claimVoiceChannel(threadId, voiceChannelId) {
+    const threads = loadThreads();
+    threads[threadId] = { ...threads[threadId], voiceChannelId };
+    saveThreads(threads);
+}
+
 module.exports = {
-    getThreadIdForUser,
-    setThreadIdForUser,
+    setThreadUtils,
+    getThreadIdForUser: (userId) => threadUtilsInstance?.getThreadIdForUser(userId) || null,
+    setThreadIdForUser: (userId, threadId) => threadUtilsInstance?.setThreadIdForUser(userId, threadId),
     ensureGameThread,
-    replyWithThreadLink
+    replyWithThreadLink,
+    createGameThread: async (client, guild, whiteId, blackId) => {
+        if (!threadUtilsInstance) {
+            throw new Error('ThreadUtils not initialized. Call setThreadUtils first.');
+        }
+        return threadUtilsInstance.createGameThread(client, guild, whiteId, blackId);
+    },
+    setupVoiceChannel,
+    releaseVoiceChannel
 };

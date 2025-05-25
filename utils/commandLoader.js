@@ -1,7 +1,8 @@
 const fs = require('fs');
 const path = require('path');
+const { Collection, REST, Routes } = require('discord.js');
 const logger = require('./logger');
-const commands = {};
+const slashCommands = new Collection();
 
 function loadCommands() {
     const commandFiles = fs.readdirSync(path.join(__dirname, '../commands'))
@@ -9,22 +10,52 @@ function loadCommands() {
 
     for (const file of commandFiles) {
         const command = require(`../commands/${file}`);
-        commands[command.name] = command;
-        logger.info(`Loaded command: ${command.name}`);
+        if (command.data && command.data.name) {
+            slashCommands.set(command.data.name, command);
+            logger.info(`Loaded slash command: ${command.data.name}`);
+        }
     }
 }
 
-function executeCommand(commandName, message, args) {
-    const command = commands[commandName];
-    if (!command) {
-        message.channel.send(`Unknown command: \`${commandName}\``);
-        return;
-    }
-
-    command.execute(message, args).catch(error => {
-        logger.error(`Error executing ${commandName}:`, error);
-        message.channel.send('⚠️ An error occurred while trying to execute the command.');
-    });
+function getSlashCommandDataArray() {
+    return slashCommands.map(cmd => cmd.data.toJSON());
 }
 
-module.exports = { loadCommands, executeCommand, commands };
+async function registerSlashCommands(clientId, token, guildId = null) {
+    try {
+        // Ensure commands are loaded first
+        loadCommands();
+        const rest = new REST({ version: '10' }).setToken(token);
+        const commandData = getSlashCommandDataArray();
+        
+        logger.info('Started refreshing application (/) commands.');
+        
+        if (guildId) {
+            // Register commands for a specific guild (faster updates for testing)
+            await rest.put(
+                Routes.applicationGuildCommands(clientId, guildId),
+                { body: commandData },
+            );
+            logger.info(`Successfully reloaded ${commandData.length} guild (/) commands.`);
+        } else {
+            // Register commands globally (takes up to an hour to propagate)
+            await rest.put(
+                Routes.applicationCommands(clientId),
+                { body: commandData },
+            );
+            logger.info(`Successfully registered ${commandData.length} global (/) commands.`);
+        }
+        
+        return true;
+    } catch (error) {
+        logger.error('Error refreshing application (/) commands:', error);
+        return false;
+    }
+}
+
+module.exports = {
+    loadCommands,
+    slashCommands,
+    getSlashCommandDataArray,
+    registerSlashCommands
+};

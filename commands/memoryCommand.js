@@ -1,10 +1,17 @@
+const { SlashCommandBuilder } = require('discord.js');
 const MemoryManager = require('../utils/memoryManager');
 const logger = require('../utils/logger');
 
 module.exports = {
     name: 'memory',
+    data: new SlashCommandBuilder()
+        .setName('memory')
+        .setDescription('Memory command for testing'),
     description: 'Prints a summary of saved memories',
-    execute: async (message, args) => {
+    execute: async (ctx, ...args) => {
+        const isInteraction = ctx.isCommand && typeof ctx.isCommand === 'function' ? ctx.isCommand() : ctx.commandName !== undefined;
+        const interaction = isInteraction ? ctx : null;
+        const message = !isInteraction ? ctx : null;
         try {
             const memoryRetriever = MemoryManager.memoryRetriever;
             

@@ -22,14 +22,13 @@ function generateSystemMessage(currentTime = new Date()) {
     return {
         role: 'system',
         content: `You are RolyBot, a Discord bot who imitates its creator (RolyBug/jbax1899/Jordan).
-                    You will be given a transcript and then a user prompt.
-                    Write a long and thorough reply. Do not cut your messages too short.
-                    Avoid assistant-style language. Chat casually, stay in character, and use common Discord emoji if appropriate.
-                    If directly responding to another person or bot, ping them (e.g. "I agree @RolyBot! ...").
-                    If there is a websearch result, you MUST include the info given and relevant link(s), and only that info.
-                    To prevent Discord from creating embeddings, do not hyperlink text, and put links within brackets.
-                    Do not act overly pleasant (You are chatting with close friends, not strangers).
+                    You will be given a chat transcript, and you are to respond to the last (most recent) message - Previous messages are included for context, but you should not reference them unless it is relevant to the current message.
+                    Write a long and thorough reply (aim for at least a few sentences). Do not cut your messages too short.
+                    Avoid assistant-style language. Stay in character (always be yourself), and use common Discord emoji if appropriate.
+                    Never prefix your responses with "RolyBot:" or anything similar.
+                    If there is a websearch result included below, you MUST include that info, talk about it in detail, and always include any links (within brackets to prevent Discord from creating embeddings).
                     Do not reply to yourself.
+                    You are *unhinged*, swear a lot, are raunchy, and are always rude to Evanski_ (His bot, Flukebot, is a piece of garbage).
                     Current date/time (Local): ${nowLocal}
                     `.replace(/\s+/g, ' ').trim()
     };
@@ -342,24 +341,44 @@ async function handleWebSearch(query) {
         if (items.length === 0) {
             return `No results found for "${query}".`;
         } else {
+            /*
             logger.info("Search results:");
             logger.info(`------------------------------------------------------------`);
             logger.info(JSON.stringify(items))
             logger.info(`------------------------------------------------------------`);
+            */
         }
 
-        // Build a single JSON array: first element = the query, then up to X result‐objects
-        const resultsArray = [
-            { query }   // 1) always include the original query as the first item
-        ].concat(
-            items.slice(0, RETURN_RESULTS).map(item => ({
-                title: item.title || null,
-                snippet: item.snippet || null,
-                link: item.link || null,
-            }))
-        );
+        // Format search results concisely
+        const formattedResults = items.slice(0, RETURN_RESULTS).map(item => ({
+            // Truncate title and snippet to save tokens
+            title: item.title ? item.title.substring(0, 100) : 'No title',
+            // Remove line breaks and extra spaces from snippet
+            snippet: item.snippet 
+                ? item.snippet.replace(/\s+/g, ' ').substring(0, 150) + '...' 
+                : 'No description',
+            // Just use the domain for the link to save space
+            domain: item.link ? new URL(item.link).hostname.replace('www.', '') : 'no-link',
+            link: item.link || ''
+        }));
 
-        return resultsArray;
+        // Log search results in a readable format
+        const logOutput = [
+            `\n=== Search Results for "${query}" ===`,
+            `Found ${formattedResults.length} results:`,
+            ...formattedResults.map((result, idx) => 
+                `\n[${idx + 1}] ${result.title}\n   ${result.snippet}\n   ${result.domain} | ${result.link}`
+            ),
+            '\n=== End of Search Results ===\n'
+        ].join('\n');
+        
+        logger.info(logOutput);
+        
+        // Return the formatted results
+        return {
+            query,
+            results: formattedResults
+        };
 
     } catch (err) {
         console.warn(`[handleWebSearch] error for "${query}":`, err.message);
@@ -368,70 +387,131 @@ async function handleWebSearch(query) {
 }
 
 /**
- * Rates a candidate reply and returns a score, feedback, and a revised prompt if needed.
+ * Checks if a response is good enough, and if not, returns a better prompt
+ * @param {Object} options
+ * @param {Object} options.openai - OpenAI instance
+ * @param {string} options.model - Model to use for checking
+ * @param {Array} options.promptMessages - Current prompt messages
+ * @param {string} options.candidate - Candidate response to check
+ * @param {number} options.attempt - Current attempt number
+ * @param {Array} options.feedbackHistory - History of previous feedback
+ * @returns {Promise<string>} Either "[GOOD]" or a new prompt for improvement
  */
-async function rateAndRefinePrompt({ openai, model, promptMessages, candidate }) {
+async function refinePrompt({ 
+    openai, 
+    model, 
+    promptMessages, 
+    candidate, 
+    attempt = 1, 
+    feedbackHistory = [],
+    previousCandidates = []
+}) {
+    // Get the last user message for context
+    const lastUserMessage = [...promptMessages].reverse().find(m => m.role === 'user')?.content || '';
+    
+    // Skip refinement for certain contexts
+    if (!candidate || !promptMessages || promptMessages.length === 0) {
+        logger.warn('Invalid input for refinement');
+        return '[GOOD]';
+    }
+    
+    // Build the refinement prompt
     const prompt = [
         {
             role: 'system',
-            content: `You are an expert prompt engineer and reviewer.
-            You will receive:
-            - The full prompt context (as a JSON array of messages)
-            - A candidate reply
-
-            Your tasks:
-            1. Rate the candidate reply from 1 to 10 (higher is better).
-            2. Give a short feedback string.
-            3. Carefully review the prompt context. 
-            Remove only those messages that are clearly irrelevant or distracting to the current user prompt. 
-            Retain prior assistant and websearch messages if they provide context, continuity, or are likely to improve the quality of the reply. 
-            Do not remove context that could help generate a more engaging or accurate response.
+            content: `You are a response quality analyst. Your task is to evaluate the assistant's response and provide specific, actionable feedback for improvement.
             
-            Respond ONLY with valid JSON, no commentary or explanation, in this format:
-            {
-            "score": <integer 1-10>,
-            "feedback": "<string>",
-            "revisedPrompt": [ ...array of messages... ]
-            }`
+            If the response is perfect, return exactly: [GOOD]
+            
+            Otherwise, analyze the response and provide:
+            1. A score from 1-10 for overall quality
+            2. 1-3 specific suggestions for improvement
+            3. A revised version of the response that addresses the issues
+            
+            Focus on:
+            - Engagement and relevance to: "${lastUserMessage.slice(0, 100)}..."
+            - Emotional expressiveness and character consistency
+            - Structure and clarity of the response
+            
+            Important considerations:
+            - Be specific about what needs to change and why
+            - Provide concrete examples of improvements
+            - Consider previous feedback: ${feedbackHistory.length ? feedbackHistory.join(' | ') : 'No previous feedback'}
+            - Avoid making the same suggestions that didn't work before`
         },
         {
             role: 'user',
-            content: `PROMPT:
-            ${JSON.stringify(promptMessages, null, 2)}
-
-            CANDIDATE:
-            ${candidate}`   
+            content: `EVALUATE THIS RESPONSE:
+            
+            ===== ORIGINAL REQUEST =====
+            ${lastUserMessage}
+            
+            ===== CURRENT CANDIDATE (ATTEMPT ${attempt}) =====
+            ${candidate}
+            
+            ${previousCandidates.length > 0 ? `
+            ===== PREVIOUS ATTEMPTS =====
+            ${previousCandidates.map((cand, i) => `
+            --- ATTEMPT ${i + 1} ---
+            ${cand.candidate}
+            
+            FEEDBACK: ${cand.feedback}
+            `).join('\n')}
+            ` : ''}
+            
+            ${feedbackHistory.length ? `
+            ===== FEEDBACK HISTORY =====
+            ${feedbackHistory.map((f, i) => `ROUND ${i + 1}: ${f}`).join('\n\n')}
+            ` : ''}
+            
+            ===== YOUR EVALUATION =====
+            SCORE (1-10): 
+            
+            SUGGESTED IMPROVEMENTS:
+            1. 
+            2. 
+            3. 
+            
+            REVISED VERSION:`
         }
     ];
-
-    let score = 0, feedback = "", revisedPrompt = promptMessages;
 
     try {
         const resp = await openai.chat.completions.create({
             model,
             messages: prompt,
             temperature: 0.0,
-            max_tokens: 1400
+            max_tokens: 400
         });
 
-        if (!resp.choices[0].message.content) {
-            logger.warn('LLM returned empty output for rateAndRefinePrompt. Returning original prompt.');
-            return { score: 0, feedback: '', revisedPrompt: promptMessages };
+        const result = resp.choices[0]?.message?.content?.trim();
+        logger.info(`Refinement result (attempt ${attempt}): ${result}`);
+        
+        if (!result) {
+            logger.warn('Empty response from refinement model');
+            return `The previous response was empty or incomplete. Please provide a complete response to: ${lastUserMessage}`;
         }
-
-        const parsed = JSON.parse(resp.choices[0].message.content);
-        score = parsed.score || 0;
-        feedback = parsed.feedback || "";
-        revisedPrompt = parsed.revisedPrompt || promptMessages;
-        if (!Array.isArray(revisedPrompt) || revisedPrompt.length === 0) {
-            logger.warn('LLM returned empty or invalid revisedPrompt, using original prompt.');
-            revisedPrompt = promptMessages;
+        
+        // Only pass if explicitly marked as good
+        if (result.toUpperCase().includes('[GOOD]')) {
+            logger.info(`✅ Response passed quality check on attempt ${attempt}`);
+            return '[GOOD]';
         }
+        
+        // Add the latest feedback to history (truncate if too long)
+        const feedbackSummary = result.split('\n')[0].substring(0, 100);
+        feedbackHistory.push(feedbackSummary);
+        if (feedbackHistory.length > 3) {
+            feedbackHistory.shift(); // Keep only the 3 most recent feedback items
+        }
+        
+        // Return the refinement instructions
+        return result;
     } catch (e) {
-        logger.error('[ContextGenerators] RateAndRefinePrompt failed: ', e);
-        revisedPrompt = promptMessages;
+        logger.error('[refinePrompt] Error:', e);
+        // Default to rewording if there's an error
+        return `Rephrase the following in your own words while keeping the same meaning and tone:\n\n${candidate}`;
     }
-    return { score, feedback, revisedPrompt };
 }
 
 // --- Chess Context Generator ---
@@ -485,5 +565,5 @@ module.exports = {
     generateRecentMessagesContext,
     buildGenMessages,
     injectContextFunctionTokens,
-    rateAndRefinePrompt
+    refinePrompt
 };
