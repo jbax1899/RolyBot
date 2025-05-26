@@ -4,9 +4,16 @@ const threadUtils = require('./threadUtils');
 
 // This will be set by the game manager to avoid circular dependencies
 let threadUtilsInstance = null;
+let clientInstance = null;
 
 function setThreadUtils(instance) {
     threadUtilsInstance = instance;
+}
+
+function setClient(client) {
+    if (threadUtilsInstance && !threadUtilsInstance.client) {
+        threadUtilsInstance.client = client;
+    }
 }
 
 /**
@@ -122,39 +129,63 @@ async function replyWithThreadLink(originalMessage, thread, threadResponse) {
 }
 
 /**
- * Creates a public thread for a chess match between two players.
+ * Creates a public thread for a chess match between two players in the current channel.
  * @param {Client} client - Discord.js client
  * @param {Guild} guild - Discord.js guild
  * @param {string} whiteId - Discord.js user ID (white)
  * @param {string} blackId - Discord.js user ID (black)
+ * @param {TextChannel} [channel] - Optional channel to create the thread in. If not provided, will use the first available text channel.
  * @returns {Promise<ThreadChannel>} The created thread
  */
-async function createGameThread(client, guild, whiteId, blackId) {
-    const channel = guild.channels.cache.find(c => c.name === 'bot-arena');
-    if (!channel) {
-        throw new Error('Could not find bot-arena channel');
+async function createGameThread(client, guild, whiteId, blackId, channel = null) {
+    try {
+        // If no channel provided, find the first available text channel
+        if (!channel) {
+            channel = guild.channels.cache.find(c => 
+                c.type === ChannelType.GuildText && 
+                c.permissionsFor(guild.members.me).has(PermissionsBitField.Flags.SendMessages)
+            );
+            
+            if (!channel) {
+                throw new Error('No suitable text channel found to create thread');
+            }
+        }
+
+        // Get user objects for both players
+        const whiteUser = await client.users.fetch(whiteId);
+        const blackUser = await client.users.fetch(blackId);
+
+        logger.info(`[ThreadManager] Creating chess thread in channel: ${channel.name} (${channel.id})`);
+        
+        // Create thread with both players' usernames
+        const thread = await channel.threads.create({
+            name: `♟️ ${whiteUser.username} vs ${blackUser.username}`.substring(0, 100), // Ensure name is within Discord's 100 char limit
+            autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek,
+            type: ChannelType.PublicThread,
+            reason: `Chess game between ${whiteUser.tag} and ${blackUser.tag}`
+        });
+
+        logger.info(`[ThreadManager] Created thread ${thread.name} (${thread.id})`);
+
+        // Add both players to the thread
+        await Promise.all([
+            thread.members.add(whiteId).catch(e => 
+                logger.error(`[ThreadManager] Failed to add white player to thread: ${e.message}`)
+            ),
+            thread.members.add(blackId).catch(e => 
+                logger.error(`[ThreadManager] Failed to add black player to thread: ${e.message}`)
+            )
+        ]);
+
+        // Store thread mappings for both players
+        setThreadIdForUser(whiteId, thread.id);
+        setThreadIdForUser(blackId, thread.id);
+
+        return thread;
+    } catch (error) {
+        logger.error(`[ThreadManager] Error creating game thread: ${error.message}`, error);
+        throw error;
     }
-
-    // Get user objects for both players
-    const whiteUser = await client.users.fetch(whiteId);
-    const blackUser = await client.users.fetch(blackId);
-
-    // Create thread with both players' usernames
-    const thread = await channel.threads.create({
-        name: `♟️ ${whiteUser.username} vs ${blackUser.username}`,
-        autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek,
-        type: ChannelType.PublicThread,
-        reason: `Chess game between ${whiteUser.tag} and ${blackUser.tag}`
-    });
-
-    // Add both players to the thread
-    await thread.members.add(whiteId);
-    await thread.members.add(blackId);
-
-    setThreadIdForUser(whiteId, thread.id);
-    setThreadIdForUser(blackId, thread.id);
-
-    return thread;
 }
 
 // Add function to release voice channel when a game ends
@@ -215,17 +246,19 @@ function claimVoiceChannel(threadId, voiceChannelId) {
     saveThreads(threads);
 }
 
+// Export functions
 module.exports = {
     setThreadUtils,
+    setClient,
     getThreadIdForUser: (userId) => threadUtilsInstance?.getThreadIdForUser(userId) || null,
     setThreadIdForUser: (userId, threadId) => threadUtilsInstance?.setThreadIdForUser(userId, threadId),
     ensureGameThread,
     replyWithThreadLink,
-    createGameThread: async (client, guild, whiteId, blackId) => {
+    createGameThread: async (client, guild, whiteId, blackId, channel = null) => {
         if (!threadUtilsInstance) {
             throw new Error('ThreadUtils not initialized. Call setThreadUtils first.');
         }
-        return threadUtilsInstance.createGameThread(client, guild, whiteId, blackId);
+        return threadUtilsInstance.createGameThread(client, guild, whiteId, blackId, channel);
     },
     setupVoiceChannel,
     releaseVoiceChannel

@@ -1,16 +1,16 @@
 {
   "329379788517277698": {
-    "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+    "fen": "r1bqkb1r/pp1p1pp1/n1p4p/3pP3/3P4/2P3P1/PP3P1P/R1BQKBNR w KQkq - 1 8",
     "playerColor": "w",
     "opponent": "527593520693772315",
-    "threadId": null,
-    "difficulty": "medium"
+    "threadId": "1376603024549613588",
+    "difficulty": "intermediate"
   },
   "527593520693772315": {
-    "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+    "fen": "r1bqkb1r/pp1p1pp1/n1p4p/3pP3/3P4/2P3P1/PP3P1P/R1BQKBNR w KQkq - 1 8",
     "playerColor": "b",
     "opponent": "329379788517277698",
-    "threadId": null,
-    "difficulty": "medium"
+    "threadId": "1376603024549613588",
+    "difficulty": "intermediate"
   }
 }

@@ -1,4 +1,5 @@
 const logger = require('./logger');
+const { recordRolybotRequest, tooManyRolybotRequests, goAFK } = require('./openaiHelper');
 const {
     generateSystemMessage,
     generateSimilarMessagesSummary,
@@ -75,7 +76,8 @@ async function generateRolybotResponse(client, message, replyContext = '') {
             userPrompt: userPrompt,
             openai,
             SUMMARY_MODEL,
-            discordUserId: message.author.id
+            discordUserId: message.author.id,
+            goAFK: (client, duration, message, setAFK) => goAFK(client, duration, message, setAFK)
         });
     } catch (err) {
         logger.error('[RolyBot] Failed to inject context function tokens:', err);

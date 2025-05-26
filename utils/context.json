@@ -13,12 +13,8 @@
         ],
         "commands": [
             {
-                "name": "help",
-                "description": "Provides a list of available commands and their usage."
-            },
-            {
-                "name": "status",
-                "description": "Displays the current status of the bot."
+                "name": "chess",
+                "description": "Challenge the bot or another user to a chess match."
             }
         ],
         "software": [

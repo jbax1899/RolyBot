@@ -5,16 +5,17 @@ const CLASSIFIER_MODEL = 'gpt-4o-mini';
 const MIN_MESSAGE_LENGTH = 3;
 
 /**
- * Classifies a message to determine if/how the bot should respond
+ * Classifies a message to determine if the bot should respond and how
  * @param {Object} messageData - Message data object
  * @param {string} messageData.content - The message content
  * @param {string} messageData.author - The author's username
  * @param {boolean} messageData.isBot - Whether the author is a bot
  * @param {boolean} messageData.isReply - Whether this is a reply to another message
  * @param {Array} messageData.messageHistory - Array of recent messages in the channel
+ * @param {Array<Object>} legalMoves - Array of legal moves in the current position
  * @returns {Promise<Object>} Classification result
  */
-async function classifyMessage({ content, author, isBot, isReply, messageHistory = [] }) {
+async function classifyMessage({ content, author, isBot, isReply, messageHistory = [], legalMoves = [] }) {
     // Is it a chess command?
     // Chess move detection, algebraic (SAN) only: e.g. e4, Nf3, O-O, Qxe5, etc.
     const algebraicRegex = /^(O-O(-O)?|[KQRBN]?[a-h]?[1-8]?x?[a-h][1-8](=[QRBN])?[+#]?)$/i;
@@ -72,6 +73,7 @@ Instructions:
 - If relevant, react with emotes by including "respond": true and "emotes": [array of valid Unicode emoji or Discord custom emoji in the format "<:name:id>"].
 - If the bot should not respond in any manner, return only { "respond": false }. If unsure, do not respond.
 - If the message is a chess move (either algebraic notation like "e4", "Nf3", or plain English like "knight to e4", "castle kingside"), include "respond": true and a chess command of "move" with the move as the value (in SAN).
+- When interpreting chess moves in plain English, use the provided legal moves to match the intended move. For example, if the user says "knight to f3" and the legal moves include "Nf3", use that exact notation.
 - If the user wants to start a new chess game, resign, or make any other chess command, append it as an object in the "chess_commands" array. Each object should be one of:
   - { "command": "start" }
   - { "command": "resign" }
@@ -81,6 +83,9 @@ Instructions:
 Available chess commands:
 ${chessCommands.map(cmd => `- ${cmd.command}: ${cmd.description}`).join("\n")}
 
+Current legal chess moves:
+${legalMoves.length > 0 ? legalMoves.map(move => `- ${move.uci}: ${move.san} (${move.piece} ${move.from} to ${move.to}${move.captured ? `, captures ${move.captured}` : ''}${move.promotion ? `, promotes to ${move.promotion}` : ''})`).join("\n") : 'No legal moves available'}
+
 Return a JSON object with your classification. Example responses:
 - { "respond": false }
 - { "respond": true, "message": true }
@@ -88,6 +93,8 @@ Return a JSON object with your classification. Example responses:
 - { "respond": true, "message": true, "emotes": ["😄"] }
 - { "respond": true, "chess_commands": [ { "command": "move", "move": "e4" } ] }
 - { "respond": true, "chess_commands": [ { "command": "resign" }, { "command": "start" } ] }
+- { "respond": true, "chess_commands": [ { "command": "move", "move": "Nf3" } ] } (for standard notation)
+- { "respond": true, "chess_commands": [ { "command": "move", "move": "g1f3" } ] } (for UCI notation)
 
 Recent conversation context (most recent last):
 ${contextMessages ? contextMessages : '(No recent messages)'}

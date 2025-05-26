@@ -230,10 +230,11 @@ function buildGenMessages({ userPrompt, formattedHistory, similarMessagesSummary
  * @param {string} userPrompt
  * @param {object} openai - OpenAI instance
  * @param {string} SUMMARY_MODEL
- * @param {function} processSpecialTokens
+ * @param {string} discordUserId - Discord user ID
+ * @param {Function} goAFK - Function to set the bot as AFK
  * @returns {Promise<Array>} Array of context messages
  */
-async function injectContextFunctionTokens({ client, userPrompt, openai, SUMMARY_MODEL, discordUserId }) {
+async function injectContextFunctionTokens({ client, userPrompt, openai, SUMMARY_MODEL, discordUserId, goAFK }) {
     // Use the LLM to select which special tokens to process
     const tokenSelectorPrompt = generateTokenSelectorPrompt(userPrompt, discordUserId);
     const tokenSelResp = await openai.chat.completions.create({
@@ -515,37 +516,211 @@ async function refinePrompt({
 }
 
 // --- Chess Context Generator ---
-const gameManager = require('./chess/gameManager');
+const createGameManager = require('./chess/gameManager');
+const { Chess } = require('chess.js');
+
+// Get the game manager instance if it exists, but don't initialize it here
+const gameManager = createGameManager.getInstanceIfExists();
 
 /**
- * Generates a human-readable summary of the chess game for a given playerId.
- * @param {string} playerId
- * @returns {string|null}
+ * Generates a detailed context about the current chess game for a given playerId.
+ * @param {string} playerId - The Discord user ID of the player
+ * @returns {string|null} Detailed game context or null if no game exists
  */
 function generateChessContext(playerId) {
-    const game = gameManager.getGame(playerId);
-    if (!game) return null;
+    if (!gameManager) {
+        logger.debug('[Chess Context] Game manager not initialized');
+        return null;
+    }
+    
+    const gameData = gameManager.getGameData(playerId);
+    if (!gameData || !gameData.gameInstance) {
+        logger.debug(`[Chess Context] No active game found for user ${playerId}`);
+        return null;
+    }
 
-    const board = game.board;
-    const turn = board.turn() === 'w' ? 'White' : 'Black';
-    const moveNumber = Math.floor((board.history().length + 1) / 2);
-    const material = getMaterialBalance(board);
-
-    let context = `Current Chess game between RolyBot and the user: `;
-    context += ` - Move number: ${moveNumber}`;
-    context += ` - Player color: ${game.playerColor === 'w' ? 'White' : 'Black'}`;
-    context += ` - Turn: ${turn}`;
-    context += ` - Material: ${material}`;
-
-    logger.info("Chess context generated: " + context);
-
-    return context;
+    try {
+        const game = gameData.gameInstance;
+        const fen = game.fen();
+        const isPlayerTurn = game.turn() === gameData.playerColor[0];
+        const playerColor = gameData.playerColor === 'w' ? 'White' : 'Black';
+        const opponentColor = playerColor === 'White' ? 'Black' : 'White';
+        const moveNumber = Math.ceil(game.history().length / 2);
+        
+        // Determine if the bot is a player in this game
+        const isBotGame = gameManager.client && 
+                        (playerId === gameManager.client.user.id || 
+                         gameData.opponent === gameManager.client.user.id);
+        const botColor = isBotGame ? 
+            (playerId === gameManager.client.user.id ? playerColor : opponentColor) : 
+            null;
+        
+        // Game status
+        const isCheck = game.inCheck();
+        const isCheckmate = game.isCheckmate();
+        const isDraw = game.isDraw();
+        const isGameOver = game.isGameOver();
+        
+        // Material balance
+        const material = getMaterialBalance(game);
+        
+        // Position evaluation (simplified)
+        const positionEval = evaluatePosition(game, material);
+        
+        // Generate context
+        let context = `## Chess Game Context\n`;
+        
+        // Player information
+        if (isBotGame) {
+            context += `- **You are playing against RolyBot**\n`;
+            context += `- **Your color**: ${playerColor}\n`;
+            context += `- **RolyBot's color**: ${botColor}\n`;
+        } else {
+            context += `- **Player**: ${playerColor} (${isPlayerTurn ? 'Your turn' : 'Opponent\'s turn'})\n`;
+        }
+        
+        // Game state
+        context += `- **Move**: ${moveNumber}${game.turn() === 'w' ? '. ' : '... '}`;
+        if (isBotGame) {
+            context += game.turn() === (botColor[0].toLowerCase() === 'w' ? 'w' : 'b') ? 
+                'RolyBot is thinking...' : 'Your move';
+        } else {
+            context += isPlayerTurn ? 'Your move' : 'Waiting for opponent';
+        }
+        context += '\n';
+        
+        // Game status
+        if (isGameOver) {
+            if (isCheckmate) {
+                if (isBotGame) {
+                    const winner = game.turn() === (botColor[0].toLowerCase() === 'w' ? 'w' : 'b') ? 
+                        'You won by checkmate!' : 'RolyBot won by checkmate';
+                    context += `- **Status**: ${winner}\n`;
+                } else {
+                    context += `- **Status**: ${isPlayerTurn ? 'You lost by checkmate' : 'You won by checkmate!'}\n`;
+                }
+            } else if (isDraw) {
+                context += `- **Status**: Game drawn by ${getDrawReason(game)}\n`;
+            } else {
+                context += `- **Status**: Game over\n`;
+            }
+        } else {
+            context += `- **Check**: ${isCheck ? 'Yes' : 'No'}\n`;
+        }
+        
+        // Position evaluation
+        context += `- **Material**: ${material}\n`;
+        context += `- **Position**: ${positionEval}\n`;
+        
+        // Recent moves (last 3 moves)
+        const recentMoves = game.history({ verbose: true }).slice(-3);
+        if (recentMoves.length > 0) {
+            context += `\n**Recent Moves**:\n`;
+            recentMoves.forEach((move, i) => {
+                const moveNumber = Math.ceil((game.history().length - recentMoves.length + i + 1) / 2);
+                const movePrefix = move.color === 'w' ? `${moveNumber}.` : `${moveNumber}...`;
+                context += `- ${movePrefix} ${move.san}${move.captured ? 'x' : ''}${move.promotion ? `=${move.promotion.toUpperCase()}` : ''}\n`;
+            });
+        }
+        
+        // Possible moves (if it's the player's turn and game isn't over)
+        if (isPlayerTurn && !isGameOver) {
+            const moves = game.moves({ verbose: true });
+            const captureMoves = moves.filter(m => m.captured);
+            const checkMoves = moves.filter(m => m.san.includes('+'));
+            
+            if (moves.length > 0) {
+                context += `\n**Possible Moves**: ${moves.length} total`;
+                if (captureMoves.length > 0) context += `, ${captureMoves.length} captures`;
+                if (checkMoves.length > 0) context += `, ${checkMoves.length} checks`;
+                context += '\n';
+                
+                // Show sample of possible moves (up to 5)
+                const sampleMoves = moves.slice(0, 5).map(m => m.san).join(', ');
+                if (sampleMoves) {
+                    context += `Sample: ${sampleMoves}${moves.length > 5 ? '...' : ''}\n`;
+                }
+            }
+        }
+        
+        logger.debug(`[Chess Context] Generated context for user ${playerId}`);
+        return context;
+        
+    } catch (error) {
+        logger.error(`[Chess Context] Error generating context: ${error.message}`, error);
+        return null;
+    }
 }
 
-function getMaterialBalance(board) {
+/**
+ * Evaluates the current board position
+ * @param {Chess} game - The chess.js game instance
+ * @param {string} material - Material balance string
+ * @returns {string} Position evaluation
+ */
+function evaluatePosition(game, material) {
+    if (game.isCheckmate()) {
+        return game.turn() === 'w' ? 'Black has checkmated White' : 'White has checkmated Black';
+    }
+    
+    if (game.isDraw()) {
+        return 'Position is drawn';
+    }
+    
+    const materialDiff = material.includes('up') ? material : 'Material is equal';
+    const pieceCount = game.board().flat().filter(sq => sq).length;
+    const phase = pieceCount > 24 ? 'Opening' : pieceCount > 16 ? 'Middlegame' : 'Endgame';
+    
+    let evaluation = `${phase} position, ${materialDiff}. `;
+    
+    if (game.inCheck()) {
+        evaluation += 'King is in check. ';
+    }
+    
+    // Count pieces for both sides
+    const pieces = { w: { p: 0, n: 0, b: 0, r: 0, q: 0 }, b: { p: 0, n: 0, b: 0, r: 0, q: 0 } };
+    for (const row of game.board()) {
+        for (const piece of row) {
+            if (piece) {
+                pieces[piece.color][piece.type]++;
+            }
+        }
+    }
+    
+    // Add piece count to evaluation
+    const addPieceCount = (color) => {
+        const p = pieces[color];
+        return `${color === 'w' ? 'White' : 'Black'}: ${p.p > 0 ? p.p + 'P ' : ''}${p.n > 0 ? p.n + 'N ' : ''}${p.b > 0 ? p.b + 'B ' : ''}${p.r > 0 ? p.r + 'R ' : ''}${p.q > 0 ? p.q + 'Q ' : ''}`.trim();
+    };
+    
+    evaluation += `White: ${addPieceCount('w')} | Black: ${addPieceCount('b')}`;
+    
+    return evaluation;
+}
+
+/**
+ * Gets the reason for a draw
+ * @param {Chess} game - The chess.js game instance
+ * @returns {string} The draw reason
+ */
+function getDrawReason(game) {
+    if (game.isStalemate()) return 'stalemate';
+    if (game.isThreefoldRepetition()) return 'threefold repetition';
+    if (game.isInsufficientMaterial()) return 'insufficient material';
+    if (game.isDraw()) return 'fifty-move rule';
+    return 'unknown reason';
+}
+
+/**
+ * Calculates material balance on the board
+ * @param {Chess} game - The chess.js game instance
+ * @returns {string} Material balance description
+ */
+function getMaterialBalance(game) {
     const pieceValues = { p: 1, n: 3, b: 3, r: 5, q: 9 };
     let white = 0, black = 0;
-    for (const row of board.board()) {
+    
+    for (const row of game.board()) {
         for (const piece of row) {
             if (!piece) continue;
             const value = pieceValues[piece.type] || 0;
@@ -553,8 +728,18 @@ function getMaterialBalance(board) {
             else black += value;
         }
     }
-    if (white === black) return 'Even';
-    return white > black ? `White is up ${white - black}` : `Black is up ${black - white}`;
+    
+    const diff = Math.abs(white - black);
+    if (diff === 0) return 'Material is even';
+    
+    const leadingColor = white > black ? 'White' : 'Black';
+    const pieceDiff = diff === 1 ? 'a pawn' : 
+                      diff <= 3 ? 'a minor piece' : 
+                      diff <= 5 ? 'a rook' : 
+                      diff < 9 ? 'a queen' : 
+                      'significant material';
+    
+    return `${leadingColor} is up ${pieceDiff} (${diff} points)`;
 }
 
 module.exports = {

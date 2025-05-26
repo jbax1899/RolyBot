@@ -1,6 +1,8 @@
 const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const gameManager = require('../utils/chess/gameManager');
 const logger = require('../utils/logger');
+const { getGameManager } = require('../utils/chess/gameManager');
+const { getBoardImageUrl } = require('../utils/chess/gameManager');
+const Chess = require('chess.js').Chess;
 
 const chessCommand = new SlashCommandBuilder()
     .setName('chess')
@@ -8,12 +10,27 @@ const chessCommand = new SlashCommandBuilder()
     .addSubcommand(sub =>
         sub.setName('challenge')
             .setDescription('Play chess with RolyBot or challenge another user')
+            .addUserOption(opt => 
+                opt.setName('opponent')
+                   .setDescription('User to challenge')
+                   .setRequired(false)
+            )
+            .addStringOption(option =>
+                option.setName('difficulty')
+                    .setDescription('AI difficulty level (only applies when playing against the bot)')
+                    .setRequired(false)
+                    .addChoices(
+                        { name: 'Beginner', value: 'beginner' },
+                        { name: 'Intermediate', value: 'intermediate' },
+                        { name: 'Advanced', value: 'advanced' },
+                        { name: 'Master', value: 'master' }
+                    )
+            )
             .addBooleanOption(option =>
                 option.setName('voice-chat')
                     .setDescription('Enable voice chat for this game (only one game can have voice chat at a time)')
                     .setRequired(false)
             )
-            .addUserOption(opt => opt.setName('opponent').setDescription('User to challenge').setRequired(false))
     );
 
 module.exports = {
@@ -21,8 +38,18 @@ module.exports = {
     data: chessCommand,
     async execute(interaction) {
         try {
+            // Get the game manager instance
+            const gameManager = getGameManager();
+            if (!gameManager) {
+                return await interaction.reply({
+                    content: 'The game manager is not ready yet. Please try again in a moment.',
+                    ephemeral: true
+                });
+            }
+            
             const opponent = interaction.options.getUser('opponent');
             const useVoiceChat = interaction.options.getBoolean('voice-chat') || false;
+            const difficulty = interaction.options.getString('difficulty') || 'intermediate'; // Default to intermediate if not specified
 
             if (opponent) {
                 logger.info(`Challenger: ${interaction.user.id}`);
@@ -31,7 +58,15 @@ module.exports = {
                 // If challenging bot, auto-accept
                 if (opponent.id === interaction.client.user.id) {
                     logger.info('Bot challenged: auto-accepting');
-                    return await gameManager.handleChallenge(interaction.user.id, opponent.id, interaction, useVoiceChat);
+                    if (gameManager && gameManager.handleChallenge) {
+                        return await gameManager.handleChallenge(interaction.user.id, opponent.id, interaction, useVoiceChat, difficulty);
+                    } else {
+                        logger.error('GameManager or handleChallenge is not available');
+                        return await interaction.reply({
+                            content: 'The game manager is not properly initialized. Please try again.',
+                            ephemeral: true
+                        });
+                    }
                 }
 
                 // Create challenge message

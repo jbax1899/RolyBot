@@ -2,13 +2,16 @@ require('dotenv').config();
 const { Client, GatewayIntentBits, Events, EmbedBuilder } = require('discord.js');
 const logger = require('./utils/logger');
 const { generateRolybotResponse, loadPosts } = require('./utils/rolybotResponse');
+const { generateChessContext } = require('./utils/contextGenerators');
 const { executeCommand, registerSlashCommands, slashCommands } = require('./utils/commandLoader');
 const { REST, Routes } = require('discord.js');
 const { recordRolybotRequest, tooManyRolybotRequests, goAFK } = require('./utils/openaiHelper');
 const { classifyMessage } = require('./utils/messageClassifier.js');
-const gameManager = require('./utils/chess/gameManager');
+const { getInstance: getGameManager } = require('./utils/chess/gameManager');
+let gameManager; // Will be initialized after client is ready
 const MemoryRetriever = require('./utils/memoryRetrieval');
 const MemoryManager = require('./utils/memoryManager');
+const { LogisticRegressionClassifier } = require('natural');
 
 const token = process.env.DISCORD_BOT_TOKEN;
 const AFK_TIMEOUT = 10;
@@ -184,6 +187,15 @@ client.once(Events.ClientReady, async () => {
         }
     };
 
+    // Initialize game manager with client
+    gameManager = getGameManager(client);
+    
+    // Make gameManager available globally
+    global.gameManager = gameManager;
+    
+    // Initialize game state manager
+    await gameManager.initialize();
+    
     // Set presence and start memory initialization
     client.user.setPresence({ status: 'online' });
     logger.info(`Bot is online as ${client.user.tag}`);
@@ -266,13 +278,33 @@ client.on(Events.MessageCreate, async message => {
         logger.warn("[RolyBot] Could not fetch message history:", err);
     }
 
+    // Get legal moves if this is a chess move
+    let legalMoves = [];
+    try {
+        const gameData = gameManager.getGameData(message.author.id);
+        if (gameData && gameData.gameInstance) {
+            legalMoves = gameData.gameInstance.moves({ verbose: true }).map(move => ({
+                uci: move.from + move.to + (move.promotion || ''),
+                san: move.san,
+                piece: move.piece,
+                from: move.from,
+                to: move.to,
+                captured: move.captured,
+                promotion: move.promotion
+            }));
+        }
+    } catch (err) {
+        logger.warn("Could not get legal moves:", err);
+    }
+
     // Prepare classification input
     const classificationInput = {
         content: message.content,
         author: message.author.username,
         isBot: message.author.bot,
         isReply: !!message.reference,
-        messageHistory
+        messageHistory,
+        legalMoves
     };
     
     // Log detailed input
@@ -297,7 +329,6 @@ client.on(Events.MessageCreate, async message => {
         `Has Message: ${'message' in classification}\n` +
         `Has Emotes: ${!!(classification.emotes && classification.emotes.length > 0)}\n` +
         `Has Chess Commands: ${!!(classification.chess_commands && classification.chess_commands.length > 0)}`;
-    
     logger.info(`Classification Output:\n${outputDetails}`);
 
     // 3. React with any emotes given by the classifier.
@@ -322,19 +353,32 @@ client.on(Events.MessageCreate, async message => {
                     // Make the move
                     try {
                         await message.channel.send('Calculating move...');
-                        const moveObj = await gameManager.makeMove(message.author.id, cmd.move);
-                        const game = gameManager.getGame(message.author.id);
-                        const boardImageUrl = await gameManager.getBoardImageUrl(game.board.fen());
+                        const moveResult = await gameManager.makeMove(message.author.id, cmd.move, message);
                         
-                        // Create embed with move and board
+                        // Get the game state after the player's move (before AI move)
+                        const playerMoveFen = moveResult.moveAfterPlayerMove || moveResult.gameData.fen;
+                        const playerMoveImageUrl = await gameManager.getBoardImageUrl(playerMoveFen);
+                        
+                        // Show the board after player's move
                         const moveEmbed = new EmbedBuilder()
                             .setTitle('Chess Board')
                             .setColor(0x5865F2) // Discord blue
-                            .setImage(boardImageUrl)
-                            .setDescription(`Your move: ${moveObj.san}`);
+                            .setImage(playerMoveImageUrl)
+                            .setDescription(`Your move: ${moveResult.move.san}`);
                         
-                        // Send the embed
+                        // Send the player's move embed
                         await message.channel.send({ embeds: [moveEmbed] });
+                        
+                        // If AI made a move, show its move
+                        if (moveResult.aiMove) {
+                            const aiMoveEmbed = new EmbedBuilder()
+                                .setTitle('Chess Board')
+                                .setColor(0x5865F2)
+                                .setImage(moveResult.aiMove.boardImageUrl)
+                                .setDescription(`AI moved: ${moveResult.aiMove.move.san}`);
+                            
+                            await message.channel.send({ embeds: [aiMoveEmbed] });
+                        }
                     } catch (err) {
                         logger.error(`[Chess] Error making move: ${err.message}`);
                         await message.channel.send('Invalid move. Please try again.');
@@ -431,10 +475,31 @@ client.on(Events.MessageCreate, async message => {
 
         // If in a chess thread, add context
         let chessRoom = '';
+        let chessContext = '';
+        
+        // Check if this is a chess thread and get game context
         if (message.channel && message.channel.type === 11 && message.channel.name && message.channel.name.toLowerCase().includes('chess vs')) {
             chessRoom = `[in thread: ${message.channel.name.toLowerCase()}]\n`;
+            
+            // Get all games that have this thread ID
+            const games = gameManager.gameStateManager.games;
+            const gameEntry = Object.entries(games).find(([_, game]) => 
+                game.threadId === message.channel.id
+            );
+            
+            if (gameEntry) {
+                const [playerId, gameData] = gameEntry;
+                // Get the chess context for both players in this thread
+                const context = generateChessContext(playerId);
+                if (context) {
+                    chessContext = `\n\n--- Current Chess Game ---\n${context}\n\n`;
+                }
+            }
         }
-        const response = await generateRolybotResponse(client, message, (chessRoom + msgContent));
+
+        logger.info(`Sending message to RolyBot: ${chessRoom + chessContext + msgContent}`);
+        
+        const response = await generateRolybotResponse(client, message, (chessRoom + chessContext + msgContent));
         if (response) await message.reply(response);
     } catch (err) {
         logger.error("[RolyBot] generateRolybotResponse error:", err);
