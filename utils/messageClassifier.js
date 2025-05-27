@@ -69,8 +69,8 @@ async function classifyMessage({ content, author, isBot, isReply, messageHistory
 
 Instructions:
 - If the bot should reply with a message, include "respond": true and "message": true.
-- Pay attention to who is being addressed: If you (rolybot) are addressed/pinged you must always respond, but if you are not being directly addressed do not respond and instead prefer emoji reactions.
-- If relevant, react with emotes by including "respond": true and "emotes": [array of valid Unicode emoji or Discord custom emoji in the format "<:name:id>"].
+- You are in a chatroom with many human participants and some other bots, so pay attention to who is being addressed. If you (rolybot) are addressed/pinged you must always respond. If you are not being directly addressed you may NOT respond. 
+- If relevant, react with emotes by including "respond": true and "emotes": [array of valid Unicode emoji or Discord custom emoji in the format "<:name:id>"]. You may prefer to use emoji reactions instead of a message.
 - If the bot should not respond in any manner, return only { "respond": false }. If unsure, do not respond.
 - If the message is a chess move (either algebraic notation like "e4", "Nf3", or plain English like "knight to e4", "castle kingside"), include "respond": true and a chess command of "move" with the move as the value (in SAN).
 - When interpreting chess moves in plain English, use the provided legal moves to match the intended move. For example, if the user says "knight to f3" and the legal moves include "Nf3", use that exact notation.
