@@ -8,13 +8,13 @@ const { REST, Routes } = require('discord.js');
 const { recordRolybotRequest, tooManyRolybotRequests, goAFK } = require('./utils/openaiHelper');
 const { classifyMessage } = require('./utils/messageClassifier.js');
 const { getInstance: getGameManager } = require('./utils/chess/gameManager');
-let gameManager; // Will be initialized after client is ready
 const MemoryRetriever = require('./utils/memoryRetrieval');
 const MemoryManager = require('./utils/memoryManager');
-const { LogisticRegressionClassifier } = require('natural');
 
+let gameManager;
 const token = process.env.DISCORD_BOT_TOKEN;
 const AFK_TIMEOUT = 10;
+const THREAD_WHITELIST = ['No Context', 'Discussion']; // Thread names where RolyBot should not send messages (but can still react)
 
 // Memory Initialization Configuration
 const MEMORY_CONFIG = {
@@ -24,10 +24,7 @@ const MEMORY_CONFIG = {
     PRIORITY_CHANNELS: [MemoryRetriever.DEFAULT_PRIORITY_CHANNEL_ID]
 };
 
-// Set global memory configuration for cross-module access
 global.MEMORY_CONFIG = MEMORY_CONFIG;
-
-// Global memory retriever managed by centralized manager
 
 let rolybotBusy = false; // Only handle one prompt at a time
 let rolybotAFK = false; // Don't respond if "AFK"
@@ -189,11 +186,7 @@ client.once(Events.ClientReady, async () => {
 
     // Initialize game manager with client
     gameManager = getGameManager(client);
-    
-    // Make gameManager available globally
     global.gameManager = gameManager;
-    
-    // Initialize game state manager
     await gameManager.initialize();
     
     // Set presence and start memory initialization
@@ -239,7 +232,8 @@ client.on(Events.MessageCreate, async message => {
 
     if (message.author.id === client.user.id) return; // Ignore self
 
-    const content = message.content.trim();
+    const isWhitelistedThread = message.channel.isThread() && 
+                              THREAD_WHITELIST.includes(message.channel.name.toLowerCase());
 
     // Handle RolyBot responses
     // 1. If AFK, break
@@ -445,6 +439,12 @@ client.on(Events.MessageCreate, async message => {
     if (!classification.respond // Classification indicates no response needed
             && !isReplyToBot) { // Not a reply to the bot
         //logger.info("[RolyBot] Classification indicates no response needed");
+        return;
+    }
+    
+    // Skip RolyBot responses in whitelisted threads
+    if (isWhitelistedThread) {
+        logger.info("[RolyBot] In whitelisted thread - skipping response");
         return;
     }
 
