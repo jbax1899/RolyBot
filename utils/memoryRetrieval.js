@@ -67,7 +67,7 @@ class MemoryRetriever {
         const {
             maxMemorySize = 500,
             memoryRateLimit = 120,
-            memoryRateLimitWindow = 60000,
+            memoryRateLimitWindow = 1000,
             priorityChannelIds = [],
             preprocessingConfig = {},
             similarityConfig = {},

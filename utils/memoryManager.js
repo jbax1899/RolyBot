@@ -38,7 +38,7 @@ class MemoryManager {
             priorityChannelIds: global.MEMORY_CONFIG?.PRIORITY_CHANNEL_ID ? [global.MEMORY_CONFIG.PRIORITY_CHANNEL_ID] : [],
             maxMemorySize: global.MEMORY_CONFIG?.MAX_MEMORY_SIZE || 500,
             memoryRateLimit: global.MEMORY_CONFIG?.MEMORY_RATE_LIMIT || 60,
-            memoryRateLimitWindow: 60000, // 1 minute
+            memoryRateLimitWindow: 1000, //ms
             preprocessingConfig: {
                 tokenLimit: 500,
                 embeddingDimension: 768,
@@ -65,6 +65,7 @@ class MemoryManager {
         logger.info('[MemoryManager] Starting memory manager initialization...');
         this._isInitialized = false; // Ensure we're marked as not initialized until complete
         this._memoryRetriever = null; // Reset memory retriever
+        this._initializationInProgress = true; // Mark initialization as in progress
 
         try {
             // Set up default priority channels if none provided
@@ -112,11 +113,9 @@ class MemoryManager {
 
             // Set up periodic sync if enabled
             if (options.syncInterval > 0) {
-                this._syncInterval = setInterval(
-                    () => this.syncMemories(client, defaultPriorityChannels),
-                    options.syncInterval
-                );
-                logger.info(`[MemoryManager] Set up memory sync every ${options.syncInterval}ms`);
+                // Don't start the sync immediately, it will be started after initialization is complete
+                this._syncInterval = options.syncInterval;
+                logger.info(`[MemoryManager] Will set up memory sync every ${options.syncInterval}ms after initialization`);
             }
 
             // Initial memory sync
@@ -135,6 +134,29 @@ class MemoryManager {
                 throw new Error('Memory retriever is not available after initialization');
             }
             
+            // Perform initial sync after initialization is complete
+            try {
+                logger.info('[MemoryManager] Starting initial memory sync...');
+                await this.syncMemories(client, defaultPriorityChannels);
+                logger.info('[MemoryManager] Initial memory sync completed successfully');
+            } catch (syncError) {
+                logger.warn('[MemoryManager] Initial memory sync failed, but continuing with initialization:', syncError);
+                // Continue with initialization even if sync fails
+            }
+            
+            // Set up background sync if enabled (now that we're fully initialized)
+            if (this._syncInterval && !this._syncIntervalId) {
+                const intervalMs = this._syncInterval;
+                logger.info(`[MemoryManager] Setting up background memory sync every ${intervalMs}ms`);
+                this._syncIntervalId = setInterval(
+                    () => this.syncMemories(client, defaultPriorityChannels).catch(error => {
+                        logger.error('[MemoryManager] Background sync failed:', error);
+                    }),
+                    intervalMs
+                );
+            }
+            
+            this._initializationInProgress = false; // Mark initialization as complete
             return this._memoryRetriever;
         } catch (error) {
             logger.error('[MemoryManager] Failed to initialize memory manager:', error);
@@ -207,8 +229,17 @@ class MemoryManager {
     }
     
     async syncMemories(client, channelIds = []) {
-        if (!this._isInitialized || !this._memoryRetriever) {
-            throw new Error('Memory manager not initialized');
+        if (!this._memoryRetriever) {
+            logger.warn('[MemoryManager] Cannot sync memories: memory retriever not initialized');
+            if (this._isInitialized) {
+                throw new Error('Memory retriever not initialized');
+            }
+            return; // Silently return if not initialized yet
+        }
+        
+        if (this._initializationInProgress) {
+            logger.debug('[MemoryManager] Skipping sync during initialization');
+            return;
         }
 
         if (!client) {
@@ -249,20 +280,29 @@ class MemoryManager {
     _setupBackgroundSync(client, priorityChannels, interval) {
         const backgroundMemorySync = async () => {
             try {
+                if (!this._isInitialized || !this._memoryRetriever) {
+                    logger.debug('[MemoryManager] Skipping background sync: not initialized yet');
+                    return;
+                }
+                
                 logger.debug('[MemoryManager] Running background memory sync');
                 await this.loadRecentMessages(client, priorityChannels);
             } catch (error) {
                 logger.error('[MemoryManager] Background memory sync failed:', error);
             } finally {
-                // Schedule next sync
-                if (this._isInitialized) {
+                // Schedule next sync only if initialized
+                if (this._isInitialized && this._memoryRetriever) {
                     this._syncTimeout = setTimeout(backgroundMemorySync, interval);
                 }
             }
         };
 
-        // Start the background sync process
-        this._syncTimeout = setTimeout(backgroundMemorySync, interval);
+        // Start the background sync process only if initialized
+        if (this._isInitialized && this._memoryRetriever) {
+            this._syncTimeout = setTimeout(backgroundMemorySync, interval);
+        } else {
+            logger.debug('[MemoryManager] Delaying background sync until initialization is complete');
+        }
     }
 
     // Memory store management methods
@@ -279,16 +319,39 @@ class MemoryManager {
     
     // Cleanup method to be called when the bot shuts down
     async cleanup() {
-        this._isInitialized = false;
+        logger.info('[MemoryManager] Cleaning up memory manager...');
+        
+        // Clear any pending timeouts
         if (this._syncTimeout) {
             clearTimeout(this._syncTimeout);
+            this._syncTimeout = null;
         }
-        logger.info('[MemoryManager] Cleaned up memory manager');
+        
+        // Clear any intervals
+        if (this._syncIntervalId) {
+            clearInterval(this._syncIntervalId);
+            this._syncIntervalId = null;
+        }
+        
+        // Clear memory retriever if it exists
+        if (this._memoryRetriever?.cleanup) {
+            await this._memoryRetriever.cleanup();
+        }
+        
+        this._isInitialized = false;
+        this._initializationInProgress = false;
+        this._syncInterval = null;
+        logger.info('[MemoryManager] Cleanup completed');
     }
 
     async loadRecentMessages(client, priorityChannels) {
         if (!client) {
             logger.error('[MemoryManager] Cannot load messages: Discord client not available');
+            return;
+        }
+        
+        if (!this._memoryRetriever) {
+            logger.warn('[MemoryManager] Cannot load messages: memory retriever not initialized');
             return;
         }
 
