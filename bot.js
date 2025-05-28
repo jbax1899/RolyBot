@@ -3,25 +3,24 @@ const { Client, GatewayIntentBits, Events, EmbedBuilder } = require('discord.js'
 const logger = require('./utils/logger');
 const { generateRolybotResponse, loadPosts } = require('./utils/rolybotResponse');
 const { generateChessContext } = require('./utils/contextGenerators');
-const { executeCommand, registerSlashCommands, slashCommands } = require('./utils/commandLoader');
-const { REST, Routes } = require('discord.js');
+const { registerSlashCommands } = require('./utils/commandLoader');
 const { recordRolybotRequest, tooManyRolybotRequests, goAFK } = require('./utils/openaiHelper');
 const { classifyMessage } = require('./utils/messageClassifier.js');
 const { getInstance: getGameManager } = require('./utils/chess/gameManager');
-const MemoryRetriever = require('./utils/memoryRetrieval');
 const MemoryManager = require('./utils/memoryManager');
+const memoryManager = MemoryManager.getInstance();
 
 let gameManager;
 const token = process.env.DISCORD_BOT_TOKEN;
 const AFK_TIMEOUT = 10;
 const THREAD_WHITELIST = ['No Context', 'Discussion']; // Thread names where RolyBot should not send messages (but can still react)
 
-// Memory Initialization Configuration
+// Memory configuration - will be updated after MemoryManager is initialized
 const MEMORY_CONFIG = {
     MAX_MEMORY_SIZE: 500,
     MEMORY_RATE_LIMIT: 1,
-    SYNC_INTERVAL_MS: 1 * 1 * 1000, // 1 second
-    PRIORITY_CHANNELS: [MemoryRetriever.DEFAULT_PRIORITY_CHANNEL_ID]
+    SYNC_INTERVAL_MS: 1 * 60 * 1000,
+    PRIORITY_CHANNEL_ID: '1362185428584890469'
 };
 
 global.MEMORY_CONFIG = MEMORY_CONFIG;
@@ -99,115 +98,83 @@ loginWithRetry().catch(err => {
 
 // Client ready event - initialize memories and set up message handling
 client.once(Events.ClientReady, async () => {
-    // Register slash commands with Discord globally
     try {
+        // Register slash commands with Discord globally
         await registerSlashCommands(client.user.id, token);
         logger.info('Slash commands registered globally');
-    } catch (error) {
-        logger.error('Failed to register slash commands:', error);
-    }
 
-    // Initialize global memory retriever via centralized manager
-    const memoryRetriever = MemoryManager.initialize({
-        priorityChannelIds: MEMORY_CONFIG.PRIORITY_CHANNELS,
-        maxMemorySize: MEMORY_CONFIG.MAX_MEMORY_SIZE,
-        memoryRateLimit: MEMORY_CONFIG.MEMORY_RATE_LIMIT
-    });
-
-    // Initialize memories from channel history
-    try {
-        // Initialize memories with background sync
-        await MemoryManager.initializeFromHistory(client, {
-            interval: MEMORY_CONFIG.SYNC_INTERVAL_MS,
-            priorityChannels: MEMORY_CONFIG.PRIORITY_CHANNELS
-        });
-        
-        logger.info('[Memory Initialization] Background memory synchronization started');
-    } catch (error) {
-        logger.error('[Memory Initialization] Failed to start background memory sync:', error);
-    }
-    logger.info(`Logged in as ${client.user.tag}`);
-    
-    // Memory initialization with comprehensive error handling
-    const initializeMemories = async () => {
-        logger.info('[Memory Initialization] Starting memory initialization process');
-        
+        // Initialize memory manager with client and config
         try {
-            // Validate client and memory retriever
-            if (!client) {
-                throw new Error('Discord client is not initialized');
-            }
+            logger.info('Initializing memory manager...');
+            
+            // Initialize with client and config
+            const memoryRetriever = await memoryManager.initialize(client, {
+                maxMemorySize: MEMORY_CONFIG.MAX_MEMORY_SIZE,
+                memoryRateLimit: MEMORY_CONFIG.MEMORY_RATE_LIMIT,
+                syncInterval: MEMORY_CONFIG.SYNC_INTERVAL_MS,
+                priorityChannelIds: [MEMORY_CONFIG.PRIORITY_CHANNEL_ID],
+                debug: true // Enable debug logging
+            });
             
             if (!memoryRetriever) {
-                throw new Error('Memory retriever is not initialized');
-            }
-
-            // Find the prioritized channel
-            const priorityChannelId = MemoryRetriever.DEFAULT_PRIORITY_CHANNEL_ID;
-            logger.info(`[Memory Initialization] Using priority channel ID: ${priorityChannelId}`);
-            
-            let channel;
-            
-            try {
-                // Ensure we have the required intents
-                if (!client.channels) {
-                    throw new Error('Missing required Discord intents for channel access');
-                }
-                channel = await client.channels.fetch(priorityChannelId);
-            } catch (fetchError) {
-                logger.warn(`Could not fetch prioritized channel ${priorityChannelId}:`, fetchError);
+                throw new Error('Memory retriever not returned from initialization');
             }
             
-            if (channel) {
-                logger.info(`Initializing memories from channel: ${channel.name}`);
-                await MemoryManager.initializeFromHistory(client, [priorityChannelId]);
-                logger.info(`Memory initialization complete. Total memories: ${MemoryManager.memoryRetriever.memoryStore.length}`);
-            } else {
-                logger.warn('Could not find prioritized channel for memory initialization');
+            // Verify memory retriever is properly initialized
+            if (typeof memoryRetriever.addMemory !== 'function') {
+                throw new Error('Memory retriever is not properly initialized');
             }
-
-            // If no memories loaded, find a fallback channel
-            if (MemoryManager.memoryRetriever.memoryStore.length === 0) {
-                const fallbackChannel = client.channels.cache.find(
-                    channel => channel.type === 0 // Text channel type
-                );
-
-                if (fallbackChannel) {
-                    logger.info(`Initializing memories from fallback channel: ${fallbackChannel.name}`);
-                    await MemoryManager.initializeFromHistory(client, [fallbackChannel.id]);
-                } else {
-                    logger.warn('No suitable channel found for memory initialization');
-                }
-            }
-        } catch (error) {
-            logger.error('Unexpected error during memory initialization:', error);
+            
+            // Store memory manager and retriever globally for access in other modules
+            global.memoryManager = memoryManager;
+            global.memoryRetriever = memoryRetriever;
+            
+            logger.info('Memory manager initialized successfully');
+            
+            // Log memory manager state for debugging
+            logger.debug('Memory manager state:', {
+                isInitialized: memoryManager._isInitialized,
+                memoryCount: memoryRetriever.memoryStore?.length || 0,
+                priorityChannels: memoryRetriever.priorityChannelIds || []
+            });
+            
+        } catch (memoryError) {
+            logger.error('Failed to initialize memory manager:', {
+                error: memoryError,
+                stack: memoryError.stack
+            });
+            
+            // Ensure we don't have a partially initialized state
+            global.memoryManager = null;
+            global.memoryRetriever = null;
+            
+            // Log the error but don't throw to allow bot to continue
+            logger.warn('Continuing without memory functionality');
         }
-    };
+        
+        // Initialize game manager
+        try {
+            gameManager = getGameManager(client);
+            global.gameManager = gameManager;
+            await gameManager.initialize();
+            logger.info('Game manager initialized successfully');
+        } catch (gameError) {
+            logger.error('Failed to initialize game manager:', gameError);
+            // Continue without game functionality
+            global.gameManager = null;
+        }
 
-    // Initialize game manager with client
-    gameManager = getGameManager(client);
-    global.gameManager = gameManager;
-    await gameManager.initialize();
-    
-    // Set presence and start memory initialization
-    client.user.setPresence({ status: 'online' });
-    logger.info(`Bot is online as ${client.user.tag}`);
-
-    // Run memory initialization without blocking the main thread
-    initializeMemories()
-        .then(() => {            
-            // Ensure bot continues to function
-            logger.info('[Memory Initialization] Memory initialization completed successfully');
-        })
-        .catch(err => {
-            // Log detailed error information
-            logger.error('Critical error in memory initialization:', err);
-            logger.error('Error stack:', err.stack);
-            
-            // Fallback: attempt to continue bot operation
-            logger.warn('Continuing bot operation with empty memory store');
-            memoryRetriever.clearMemory(); // Ensure a clean state
-        });
+        // Set presence
+        client.user.setPresence({ status: 'online' });
+        logger.info(`Bot is online as ${client.user.tag}`);
+        
+    } catch (error) {
+        logger.error('Critical error during client ready initialization:', error);
+        logger.error('Error stack:', error.stack);
+        
+        // Attempt to continue with limited functionality
+        logger.warn('Bot is running with limited functionality due to initialization errors');
+    }
 });
 
 // Handle slash command interactions
@@ -507,5 +474,4 @@ client.on(Events.MessageCreate, async message => {
         clearInterval(typingInterval);
         rolybotBusy = false;
     }
-    // --- End RolyBot chatbot logic ---
 });

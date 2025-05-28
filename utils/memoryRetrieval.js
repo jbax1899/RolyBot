@@ -32,9 +32,9 @@ const RELEVANCE_WEIGHTS = {
 
 // Similarity Thresholds
 // Controls how strict the memory matching process is
-const COSINE_SIMILARITY_THRESHOLD = 0.3;
-const JACCARD_SIMILARITY_THRESHOLD = 0.15;
-const LEVENSHTEIN_MAX_DISTANCE = 10;
+const DEFAULT_COSINE_SIMILARITY_THRESHOLD = 0.3;
+const DEFAULT_JACCARD_SIMILARITY_THRESHOLD = 0.15;
+const DEFAULT_LEVENSHTEIN_MAX_DISTANCE = 10;
 
 /**
  * RolyBot Memory Retrieval System
@@ -58,21 +58,25 @@ class MemoryRetriever {
     static DEFAULT_PRIORITY_CHANNEL_ID = '1362185428584890469';
 
     // Similarity and matching thresholds
-    static COSINE_SIMILARITY_THRESHOLD = COSINE_SIMILARITY_THRESHOLD;
-    static JACCARD_SIMILARITY_THRESHOLD = JACCARD_SIMILARITY_THRESHOLD;
-    static LEVENSHTEIN_MAX_DISTANCE = LEVENSHTEIN_MAX_DISTANCE;
+    static get COSINE_SIMILARITY_THRESHOLD() { return DEFAULT_COSINE_SIMILARITY_THRESHOLD; }
+    static get JACCARD_SIMILARITY_THRESHOLD() { return DEFAULT_JACCARD_SIMILARITY_THRESHOLD; }
+    static get LEVENSHTEIN_MAX_DISTANCE() { return DEFAULT_LEVENSHTEIN_MAX_DISTANCE; }
 
     constructor(config = {}) {
         // Destructure configuration with sensible defaults
         const {
             maxMemorySize = 500,
             memoryRateLimit = 120,
-            memoryRateLimitWindow = 60000, // 1 minute
-            priorityChannelIds = [MemoryRetriever.DEFAULT_PRIORITY_CHANNEL_ID],
+            memoryRateLimitWindow = 60000,
+            priorityChannelIds = [],
             preprocessingConfig = {},
             similarityConfig = {},
-            relevanceWeights = RELEVANCE_WEIGHTS
+            relevanceWeights = RELEVANCE_WEIGHTS,
+            client = null
         } = config;
+        
+        // Store client reference
+        this.client = client;
 
         // Preprocessing configuration
         const {
@@ -112,7 +116,6 @@ class MemoryRetriever {
     }
 
     // Calculate multi-dimensional memory relevance
-    // Wrapper method for preprocessing to maintain backwards compatibility
     preprocessInput(input) {
         return preprocessInput(input);
     }
@@ -429,29 +432,14 @@ class MemoryRetriever {
 
         const { tokens, embedding } = this.preprocessInput(input);
 
-        // Log input preprocessing
-        //logger.info(`[MemoryRetriever] Input tokens: ${tokens.join(', ')}`);
-        //logger.info(`[MemoryRetriever] Input embedding length: ${embedding.length}`);
-
         // Ensure we have memories to search
         if (this.memoryStore.length === 0) {
             logger.warn('[MemoryRetriever] No memories available for retrieval');
-            
-            // Additional 
-            /*
-            logger.info(`[MemoryRetriever] Current instance: ${JSON.stringify({
-                maxMemorySize: this.maxMemorySize,
-                priorityChannelIds: this.priorityChannelIds,
-                memoryRateLimit: this.memoryRateLimit
-            })}`);
-            */
-
             return [];
         }
 
         // Tiered filtering with more lenient thresholds
         let relevantMemories = this.cosineSimilarityFilter(embedding, 0.5); // Lower threshold
-        //logger.info(`[MemoryRetriever] Memories after cosine similarity filter: ${relevantMemories.length}`);
         
         // Log details of cosine similarity filtering
         if (relevantMemories.length === 0) {
@@ -498,6 +486,7 @@ class MemoryRetriever {
             Total Memories: ${candidates.length}
             Memories with Relevance: ${sortedMemories.filter(item => item.relevanceScore > 0).length}
             Top Memories Retrieved: ${topMemories.length}`);
+        
         // Prepare final memories
         const finalMemories = topMemories.map(memory => memory);
 
@@ -593,105 +582,272 @@ class MemoryRetriever {
         }
 
         // Detailed logging
-        /*
         logger.info(`[MemoryRetriever] Memory added successfully: ${text.substring(0, 100)}...`, {
             timestamp: currentTime,
             tokens: preprocessedInput.tokens.length,
             context: normalizedContext
         });
-        */
-
+        
         return true;
     }
 
-    // Initialize memories from channel history
-    async initializeMemoriesFromHistory(client, customChannelIds = [], limit = 100) {
-        // Validate input
-        if (!client) {
-            logger.error('[MemoryRetriever] No Discord client provided');
-            return;
+    /**
+     * Clear all stored memories and reset relevant state
+     */
+    clearMemories() {
+        this.memoryStore = [];
+        this.memoryTimestamps = [];
+        this.memoryRateLimits = new Map();
+        this.lastSyncTime = 0;
+        
+        // Reset any tokenizers or other state if needed
+        if (this.tokenizer) {
+            this.tokenizer = new natural.WordTokenizer();
         }
+        
+        logger.info('[MemoryRetriever] Cleared all memories and reset state');
+        
+        return true;
+    }
 
-        // Combine instance priority channels with any custom channels
-        const channelIds = [...new Set([...this.priorityChannelIds, ...customChannelIds])];
 
-        logger.info(`[MemoryRetriever] Attempting to initialize memories from channels: ${channelIds.join(', ')}`);
-        logger.info(`[MemoryRetriever] Current instance priority channels: ${this.priorityChannelIds.join(', ')}`);
-        logger.info(`[MemoryRetriever] Custom channel IDs: ${customChannelIds.join(', ')}`);
-
+    /**
+     * Initialize memories from channel history
+     * @param {Client} client - Discord client instance
+     * @param {string[]} customChannelIds - Array of channel IDs to load memories from
+     * @param {number} limit - Maximum number of messages to fetch per channel
+     * @returns {Promise<number>} Number of memories initialized
+     */
+    async initializeMemoriesFromHistory(client, customChannelIds = [], limit = 100) {
+        const startTime = Date.now();
+        
+        if (!client) {
+            const error = new Error('No Discord client provided');
+            logger.error('[MemoryRetriever] Initialization failed:', error);
+            throw error;
+        }
+        
         let memoriesInitialized = 0;
         let totalProcessedMessages = 0;
-
-        // Iterate through priority channels
-        for (const channelId of channelIds) {
-            logger.info(`[MemoryRetriever] Attempting to process channel: ${channelId}`);
+        let channelsProcessed = 0;
+        let channelsFailed = 0;
+        
+        try {
+            // Use custom channel IDs if provided, otherwise use priority channels, or empty array if none
+            const channelIds = customChannelIds.length > 0 
+                ? customChannelIds 
+                : (this.priorityChannelIds || []);
+                
+            if (channelIds.length === 0) {
+                logger.warn('[MemoryRetriever] No channel IDs provided for memory initialization');
+                return 0;
+            }
             
-            try {
-                const channel = await client.channels.fetch(channelId);
+            logger.info(`[MemoryRetriever] Starting memory initialization for ${channelIds.length} channels`);
+            
+            // Clear existing memories before loading new ones
+            this.clearMemories();
 
-                // Validate channel
-                if (!channel || !channel.isTextBased()) {
-                    logger.warn(`[MemoryRetriever] Channel ${channelId} is not a valid text channel`);
-                    continue;
+            logger.info(`[MemoryRetriever] Attempting to initialize memories from channels: ${channelIds.join(', ')}`);
+            logger.debug(`[MemoryRetriever] Current instance priority channels: ${this.priorityChannelIds?.join(', ') || 'None'}`);
+            logger.debug(`[MemoryRetriever] Custom channel IDs: ${customChannelIds.join(', ')}`);
+            logger.debug(`[MemoryRetriever] Memory limit: ${limit}`);
+
+            // Process each channel
+            for (const channelId of channelIds) {
+                try {
+                    const result = await this.processChannel(client, channelId, limit);
+                    memoriesInitialized += result.memoriesInitialized;
+                    totalProcessedMessages += result.processedMessages;
+                    channelsProcessed++;
+
+                    // Stop if we've reached max memory size
+                    if (memoriesInitialized >= this.maxMemorySize) {
+                        logger.info(`[MemoryRetriever] Reached max memory size of ${this.maxMemorySize}`);
+                        break;
+                    }
+                } catch (error) {
+                    channelsFailed++;
+                    logger.error(`[MemoryRetriever] Error processing channel ${channelId}:`, error);
                 }
+            }
 
-                // Fetch messages, sorting from oldest to newest
-                const messages = await channel.messages.fetch({ limit });
-                const memoryEntries = Array.from(messages.values())
-                    .sort((a, b) => a.createdTimestamp - b.createdTimestamp) // Oldest first
-                    .filter(message => {
-                        // Filter out system messages, empty messages, or bot messages
-                        const isValidMessage = message.content.trim().length > 0 && 
-                            !message.author.bot && 
-                            message.type === 0; // Default message type
-                        return isValidMessage;
+            // Log final results
+            this.logInitializationResults(memoriesInitialized, totalProcessedMessages, channelsProcessed, channelsFailed);
+            return memoriesInitialized;
+            
+        } catch (error) {
+            logger.error('[MemoryRetriever] Error initializing memories from history:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Process a single channel to extract and store memories
+     * @private
+     * @param {Client} client - Discord client
+     * @param {string} channelId - Channel ID to process
+     * @param {number} limit - Max messages to process
+     * @returns {Promise<{memoriesInitialized: number, processedMessages: number}>}
+     */
+    async processChannel(client, channelId, limit) {
+        const channelStartTime = Date.now();
+        let memoriesInitialized = 0;
+        let processedMessages = 0;
+
+        try {
+            logger.info(`[MemoryRetriever] Processing channel ${channelId}...`);
+            
+            const channel = await client.channels.fetch(channelId);
+            
+            // Validate channel
+            if (!channel) {
+                throw new Error(`Channel ${channelId} not found`);
+            }
+            
+            if (!channel.isTextBased()) {
+                throw new Error(`Channel ${channelId} is not a text channel`);
+            }
+            
+            logger.debug(`[MemoryRetriever] Successfully fetched channel: ${channel.name} (${channel.id})`);
+
+            // Fetch and process messages
+            const { memoryEntries, skippedMessages } = await this.fetchAndFilterMessages(channel, limit);
+            processedMessages = memoryEntries.length + skippedMessages;
+            
+            logger.debug(`[MemoryRetriever] Processed ${memoryEntries.length} messages (${skippedMessages} skipped) from channel ${channel.name}`);
+
+            // Add messages as memories
+            for (const message of memoryEntries) {
+                try {
+                    const addResult = this.addMemory(message.content, {
+                        source: 'channel_history',
+                        channelId: channel.id,
+                        authorId: message.author.id,
+                        username: message.author.username,
+                        timestamp: message.createdTimestamp
                     });
 
-                logger.info(`[MemoryRetriever] Processing ${memoryEntries.length} valid messages from channel: ${channelId}`);
-
-                let channelMemoriesInitialized = 0;
-                for (const message of memoryEntries) {
-                    try {
-                        const addResult = this.addMemory(message.content, {
-                            source: 'channel_history',
-                            channelId: channel.id,
-                            authorId: message.author.id,
-                            username: message.author.username,
-                            timestamp: message.createdTimestamp
-                        });
-
-                        if (addResult) {
-                            memoriesInitialized++;
-                            channelMemoriesInitialized++;
-                        }
-
-                        totalProcessedMessages++;
-
-                        // Limit total memories to prevent overwhelming the store
-                        if (memoriesInitialized >= this.maxMemorySize) {
-                            logger.info(`[MemoryRetriever] Reached max memory size of ${this.maxMemorySize}`);
-                            break;
-                        }
-                    } catch (memoryError) {
-                        logger.error(`[MemoryRetriever] Error adding memory from message: ${memoryError.message}`);
+                    if (addResult) {
+                        memoriesInitialized++;
                     }
+
+                    // Stop if we've reached max memory size
+                    if (memoriesInitialized >= this.maxMemorySize) {
+                        break;
+                    }
+                } catch (error) {
+                    logger.error(`[MemoryRetriever] Error adding memory from message: ${error.message}`);
                 }
-
-                logger.info(`[MemoryRetriever] Initialized ${channelMemoriesInitialized} memories from channel ${channelId}`);
-
-                // Stop after successfully processing a channel
-                if (channelMemoriesInitialized > 0) break;
-
-            } catch (channelError) {
-                logger.error(`[MemoryRetriever] Error accessing channel ${channelId}: ${channelError.message}`);
             }
-        }
 
-        // Fallback: if no memories initialized, log a warning
+            logger.info(`[MemoryRetriever] Initialized ${memoriesInitialized} memories from channel ${channelId}`);
+            return { memoriesInitialized, processedMessages };
+            
+        } catch (error) {
+            logger.error(`[MemoryRetriever] Error processing channel ${channelId}:`, error);
+            throw error;
+        }
+    }
+
+    /**
+     * Fetch and filter messages from a channel
+     * @private
+     * @param {TextChannel} channel - Channel to fetch messages from
+     * @param {number} limit - Max messages to fetch
+     * @returns {Promise<{memoryEntries: Message[], skippedMessages: number}>}
+     */
+    async fetchAndFilterMessages(channel, limit) {
+        const memoryEntries = [];
+        let skippedMessages = 0;
+        const MAX_FETCH_LIMIT = 100; // Discord's maximum messages per request
+        
+        try {
+            logger.debug(`[MemoryRetriever] Fetching up to ${limit} messages from channel ${channel.name}`);
+            
+            // If limit is greater than MAX_FETCH_LIMIT, we'll need to make multiple requests
+            const fetchLimit = Math.min(limit, MAX_FETCH_LIMIT);
+            let messages = [];
+            let lastMessageId = null;
+            let fetchCount = 0;
+            
+            // Keep fetching until we reach the limit or run out of messages
+            while (messages.length < limit) {
+                const fetchOptions = { limit: Math.min(fetchLimit, limit - messages.length) };
+                
+                // If we have a last message ID, fetch messages before it
+                if (lastMessageId) {
+                    fetchOptions.before = lastMessageId;
+                }
+                
+                try {
+                    const batch = await channel.messages.fetch(fetchOptions);
+                    const batchArray = Array.from(batch.values());
+                    
+                    if (batchArray.length === 0) {
+                        logger.debug(`[MemoryRetriever] No more messages to fetch from channel ${channel.name}`);
+                        break; // No more messages to fetch
+                    }
+                    
+                    // Update last message ID for next fetch
+                    lastMessageId = batchArray[batchArray.length - 1].id;
+                    
+                    // Process messages in this batch
+                    for (const message of batchArray) {
+                        // Skip system messages, empty messages, or bot messages
+                        if (message.content.trim().length === 0 || message.author.bot || message.type !== 0) {
+                            skippedMessages++;
+                            continue;
+                        }
+                        memoryEntries.push(message);
+                    }
+                    
+                    fetchCount++;
+                    logger.debug(`[MemoryRetriever] Fetched batch ${fetchCount} with ${batchArray.length} messages from channel ${channel.name}`);
+                    
+                    // If we got fewer messages than requested, we've reached the end
+                    if (batchArray.length < fetchLimit) {
+                        break;
+                    }
+                } catch (error) {
+                    logger.error(`[MemoryRetriever] Error fetching message batch ${fetchCount + 1} from channel ${channel.name}:`, error);
+                    // Continue with the messages we've already fetched
+                    break;
+                }
+            }
+            
+            // Sort by timestamp (oldest first)
+            memoryEntries.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+            
+            logger.debug(`[MemoryRetriever] Fetched ${memoryEntries.length} messages (${skippedMessages} skipped) from channel ${channel.name} in ${fetchCount} batches`);
+            
+        } catch (error) {
+            logger.error(`[MemoryRetriever] Error fetching messages from channel ${channel.name}:`, error);
+            // Don't throw the error, just log it and continue with whatever messages we have
+            // This allows the bot to continue running even if there's an error with one channel
+        }
+        
+        return { memoryEntries, skippedMessages };
+    }
+
+    /**
+     * Log the results of memory initialization
+     * @private
+     * @param {number} memoriesInitialized - Number of memories initialized
+     * @param {number} totalProcessedMessages - Total messages processed
+     * @param {number} channelsProcessed - Number of channels successfully processed
+     * @param {number} channelsFailed - Number of channels that failed to process
+     */
+    logInitializationResults(memoriesInitialized, totalProcessedMessages, channelsProcessed, channelsFailed) {
         if (memoriesInitialized === 0) {
             logger.warn('[MemoryRetriever] Could not initialize memories from any channel');
         } else {
-            logger.info(`[MemoryRetriever] Successfully initialized ${memoriesInitialized} memories from ${totalProcessedMessages} processed messages`);
+            const successRate = Math.round((memoriesInitialized / Math.max(1, totalProcessedMessages)) * 100);
+            logger.info(`[MemoryRetriever] Successfully initialized ${memoriesInitialized} memories from ${totalProcessedMessages} processed messages (${successRate}% success rate)`);
+            
+            if (channelsFailed > 0) {
+                logger.warn(`[MemoryRetriever] Failed to process ${channelsFailed} channel(s)`);
+            }
         }
     }
 

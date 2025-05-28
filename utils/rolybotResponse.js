@@ -1,5 +1,5 @@
 const logger = require('./logger');
-const { recordRolybotRequest, tooManyRolybotRequests, goAFK } = require('./openaiHelper');
+const { goAFK } = require('./openaiHelper');
 const {
     generateSystemMessage,
     generateSimilarMessagesSummary,
@@ -22,9 +22,11 @@ const PROMPT_REFINE_MODEL = 'gpt-4o-mini';
 async function generateRolybotResponse(client, message, replyContext = '') {
     const userPrompt = replyContext + message.content;
     const channel = message.channel;
-
+    let contextMessages = [];
+    
     // 1) System message
     const systemMessage = generateSystemMessage();
+    contextMessages.push(systemMessage);
 
     // 2) Summary of similar messages
     // a. Load and format history
@@ -45,30 +47,26 @@ async function generateRolybotResponse(client, message, replyContext = '') {
         }));
 
     // b. Find most similar messages and generate a summary
-    /*
     const similarMessagesSummary = await generateSimilarMessagesSummary(
         userPrompt, 
         memoryRetriever, 
         openai
     );
-    */
+    if (similarMessagesSummary) contextMessages.push(similarMessagesSummary);
 
-    // 3) Inject context function tokens
+    // 3) Token handling
+    // a. Inject context function tokens
     const MAX_TOTAL_TOKENS = 6000;
     const RESERVED_TOKENS = 500;
-    // Start with system message and summary
-    let contextMessages = [systemMessage];
-    // TODO: Re-enable similar messages summary
-    //if (similarMessagesSummary) contextMessages.push(similarMessagesSummary);
 
-    // 3b) Log the full context before sending to model
+    // b. Log the full context before sending to model
     logger.info('===== FINAL PROMPT TO MAIN MODEL =====');
     contextMessages.forEach((msg, i) => {
         logger.info(`[${i}] ${msg.role.toUpperCase()}:\n${msg.content}\n`);
     });
     logger.info('===== END FINAL PROMPT =====\n');
 
-    // 3c) Inject function tokens
+    // c. Inject function tokens
     let contextFunctionMessages = [];
     try {
         contextFunctionMessages = await injectContextFunctionTokens({
