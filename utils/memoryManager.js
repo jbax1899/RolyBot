@@ -49,6 +49,17 @@ class MemoryManager {
         MemoryManager.instance = this;
     }
 
+    /**
+     * Get the memory retriever instance
+     * @returns {MemoryRetriever} The memory retriever instance
+     */
+    get memoryRetriever() {
+        if (!this._memoryRetriever) {
+            throw new Error('Memory retriever not initialized. Call initialize() first.');
+        }
+        return this._memoryRetriever;
+    }
+
     async initialize(client, customOptions = {}) {
         // Validate client and options
         if (!client) {

@@ -196,21 +196,37 @@ client.on(Events.InteractionCreate, async interaction => {
 // Handle incoming messages
 client.on(Events.MessageCreate, async message => {
     if (message.content.startsWith('/')) return; // Ignore slash commands (handled by interactionCreate)
-
     if (message.author.id === client.user.id) return; // Ignore self
+
+    // Only respond if the bot is mentioned or the message is a reply to the bot
+    const isMentioned = message.mentions.has(client.user);
+    let isReplyToBot = false;
+    
+    if (message.reference?.messageId) {
+        try {
+            const original = await message.channel.messages.fetch(message.reference.messageId);
+            isReplyToBot = original.author.id === client.user.id;
+        } catch (error) {
+            logger.error('Error fetching referenced message:', error);
+        }
+    }
+
+    if (!isMentioned && !isReplyToBot) return; // Skip if not mentioned and not a reply to the bot
 
     const isWhitelistedThread = message.channel.isThread() && 
                               THREAD_WHITELIST.includes(message.channel.name.toLowerCase());
 
     // Handle RolyBot responses
     // 1. If AFK, break
+    // Note: Disabling this as RolyBot is sunset, as it is not needed as much
+    /*
     if (rolybotAFK) {
         logger.info("[RolyBot] AFK/rate limited - ignoring trigger.");
         return;
     }
+    */
 
-    // 2. Run the classifier
-    let isReplyToBot = false;
+    // 2. Run the classifiers
     let repliedTo = null;
     if (message.reference?.messageId) {
         try {

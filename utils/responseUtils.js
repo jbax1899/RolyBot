@@ -10,7 +10,7 @@ const logger = require('./logger');
  */
 async function generateResponse(openai, messages, options = {}) {
     const {
-        model = 'gpt-4',
+        model = 'ft:gpt-4.1-2025-04-14:personal:rolybot:BOJYk0lB',
         temperature = 0.7,
         maxTokens = 600
     } = options;
@@ -38,7 +38,7 @@ async function generateResponse(openai, messages, options = {}) {
  */
 async function refineResponse(openai, params) {
     const {
-        model = 'gpt-4',
+        model = 'gpt-4o-mini',
         promptMessages,
         candidate,
         attempt,
@@ -76,8 +76,10 @@ async function refineResponse(openai, params) {
 async function generateAndRefineResponse(openai, contextMessages, options = {}) {
     const {
         maxRetryAttempts = 1,
-        model = 'gpt-4',
-        refineModel = 'gpt-4'
+        model = 'ft:gpt-4.1-2025-04-14:personal:rolybot:BOJYk0lB',
+        refineModel = 'gpt-4o-mini',
+        temperature = 0.7,
+        maxTokens = 600
     } = options;
 
     const maxAttempts = Math.max(1, maxRetryAttempts);
@@ -96,14 +98,22 @@ async function generateAndRefineResponse(openai, contextMessages, options = {}) 
 
         // If refinement is disabled, generate and return the response
         if (maxRetryAttempts <= 0) {
-            bestReply = await generateResponse(openai, contextMessages, { model });
+            bestReply = await generateResponse(openai, contextMessages, { 
+                model,
+                temperature,
+                maxTokens 
+            });
             logger.info(`Generated response (refinement disabled):\n${bestReply}`);
             return bestReply;
         }
 
         try {
             // Generate response with current context
-            const candidate = await generateResponse(openai, contextMessages, { model });
+            const candidate = await generateResponse(openai, contextMessages, { 
+                model,
+                temperature,
+                maxTokens 
+            });
             logger.info(`Candidate (attempt ${attempt}):\n${candidate}`);
 
             // If this is the last attempt, return the best candidate

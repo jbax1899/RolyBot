@@ -1,15 +1,16 @@
 const { openai } = require('./openaiHelper');
 const MemoryManager = require('./memoryManager');
-const { generateSystemMessage, generateSimilarMessagesSummary } = require('./contextGenerators');
-const { injectContextFunctionTokens } = require('./responseUtils');
 const { goAFK } = require('./openaiHelper');
 const { buildInitialContext, enhanceContext } = require('./contextUtils');
 const { generateAndRefineResponse } = require('./responseUtils');
 const config = require('../config/responseConfig');
-const { loadPosts } = require('./messageUtils');
+const logger = require('./logger');
 
-// Use centralized memory manager to get memory retriever
-const memoryRetriever = MemoryManager.memoryRetriever;
+// Get memory manager instance
+const memoryManager = require('./memoryManager').getInstance();
+
+// Get memory retriever from the memory manager instance
+const memoryRetriever = memoryManager.memoryRetriever;
 
 /**
  * Generates a response to a user message with context and refinement
@@ -31,7 +32,19 @@ async function generateRolybotResponse(client, message, replyContext = '') {
             openai
         );
 
-        // 2. Enhance context with function tokens and recent messages
+        // 2. Add recent message history to context
+        if (formattedHistory && formattedHistory.length > 0) {
+            // Add each historical message to context
+            formattedHistory.forEach(msg => {
+                contextMessages.push({
+                    role: msg.isBot ? 'assistant' : 'user',
+                    content: msg.content,
+                    name: msg.username
+                });
+            });
+        }
+
+        // 3. Enhance context with function tokens and other metadata
         await enhanceContext(contextMessages, {
             client,
             userPrompt,
@@ -42,10 +55,13 @@ async function generateRolybotResponse(client, message, replyContext = '') {
             goAFK: (client, duration, msg, setAFK) => goAFK(client, duration, msg, setAFK)
         });
 
-        // 3. Add user prompt last
+        // 4. Add user prompt last
         contextMessages.push({ role: 'user', content: userPrompt });
 
-        // 4. Generate and refine response
+        // 5. Log the full context
+        logger.info('Full context:', JSON.stringify(contextMessages, null, 2));
+
+        // 6. Generate and refine response
         return await generateAndRefineResponse(openai, contextMessages, {
             maxRetryAttempts: config.limits.maxRetryAttempts,
             model: config.models.primary,

@@ -14,7 +14,7 @@ async function buildInitialContext(userPrompt, channel, memoryRetriever, openai)
     const contextMessages = [generateSystemMessage()];
     
     try {
-        const history = await loadPosts(channel, 20);
+        const history = await loadPosts(channel, 10);
         const formattedHistory = history
             .filter(e => e?.content?.trim())
             .map(({ role, content, username, isBot }) => ({
@@ -59,19 +59,6 @@ async function enhanceContext(contextMessages, options) {
     } = options;
 
     try {
-        // Add function tokens if available
-        if (injectContextFunctionTokens) {
-            const functionMessages = await injectContextFunctionTokens({
-                client,
-                userPrompt,
-                openai,
-                SUMMARY_MODEL: summaryModel,
-                discordUserId: userId,
-                goAFK
-            });
-            contextMessages.push(...functionMessages);
-        }
-
         // Add recent messages (deduped)
         const dedupeSet = new Set(contextMessages.map(m => m.content));
         const history = await loadPosts(channel, 20);
