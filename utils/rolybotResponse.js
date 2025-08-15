@@ -119,22 +119,28 @@ async function generateRolybotResponse(client, message, replyContext = '') {
             name: message.author?.username || 'user'
         });
 
-        // 6. Log the context for debugging
-        logger.info('============================');
-        logger.info('=== RESPONSE CONTEXT DETAILS ===');
+        // 6. Log the complete context for debugging
+        logger.info('\n' + '='.repeat(80));
+        logger.info('RESPONSE CONTEXT DETAILS'.padStart(45));
+        logger.info('='.repeat(80));
         logger.info(`Total context messages: ${contextMessages.length}`);
-        logger.info(`History messages: ${formattedHistory.length}`);
-        logger.info('--- Last Context Message Preview ---');
-        if (contextMessages.length > 0) {
-            const lastMessage = contextMessages[contextMessages.length - 1];
-            logger.info(`Type: ${lastMessage.role || 'unknown'}`);
-            logger.info(`Content length: ${lastMessage.content?.length || 0} characters`);
-            logger.info(`Preview: ${lastMessage.content?.substring(0, 150) || '(empty)'}${(lastMessage.content?.length || 0) > 150 ? '...' : ''}`);
-        } else {
+        logger.info(`History messages: ${formattedHistory.length}\n`);
+        
+        if (contextMessages.length === 0) {
             logger.info('No context messages available');
+        } else {
+            logger.info('=== FULL CONTEXT MESSAGES ===');
+            contextMessages.forEach((msg, index) => {
+                logger.info(`\n[Message ${index + 1}/${contextMessages.length}] ${msg.role || 'unknown'}:`);
+                logger.info('-'.repeat(40));
+                logger.info(msg.content || '(empty content)');
+                logger.info('-'.repeat(40));
+                if (msg.name) logger.info(`Name: ${msg.name}`);
+                if (msg.timestamp) logger.info(`Timestamp: ${msg.timestamp}`);
+                logger.info(`Content length: ${msg.content?.length || 0} characters`);
+            });
         }
-        logger.info('=== END CONTEXT DETAILS ===');
-        logger.info('============================');
+        logger.info('\n' + '='.repeat(80) + '\n');
 
         // 7. Generate and refine response with retry logic
         try {
