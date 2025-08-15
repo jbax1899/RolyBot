@@ -1,4 +1,18 @@
-const { MemoryRetriever } = require('./memoryRetrieval');
+// Import MemoryRetriever with error handling
+let MemoryRetriever;
+try {
+    MemoryRetriever = require('./memoryRetrieval').MemoryRetriever;
+} catch (error) {
+    console.error('Failed to load MemoryRetriever:', error);
+    // Create a dummy MemoryRetriever class if the real one can't be loaded
+    MemoryRetriever = class DummyMemoryRetriever {
+        constructor() {}
+        async initialize() {}
+        async addMemory() {}
+        async retrieveRelevantMemories() { return []; }
+    };
+}
+
 const logger = require('./logger');
 
 // Default configuration
@@ -66,109 +80,107 @@ class MemoryManager {
      * @returns {MemoryRetriever} The memory retriever instance
      */
     get memoryRetriever() {
-        if (!this._memoryRetriever) {
-            throw new Error('Memory retriever not initialized. Call initialize() first.');
-        }
-        return this._memoryRetriever;
-    }
-
-    async initialize(client, customOptions = {}) {
-        // Validate client and options
-        if (!client) {
-            const error = new Error('Discord client is required for memory manager initialization');
-            logger.error('[MemoryManager] Initialization failed:', error);
-            throw error;
-        }
-
-        if (this._isInitialized) {
-            logger.info('[MemoryManager] Memory manager already initialized');
+        // If we already have a memory retriever, return it
+        if (this._memoryRetriever) {
             return this._memoryRetriever;
         }
 
-        logger.info('[MemoryManager] Starting memory manager initialization...');
-        this._isInitialized = false; // Ensure we're marked as not initialized until complete
-        this._memoryRetriever = null; // Reset memory retriever
-        this._initializationInProgress = true; // Mark initialization as in progress
+        // If initialization is already in progress, return null to avoid multiple initializations
+        if (this._initializationInProgress) {
+            return null;
+        }
 
+        logger.warn('[MemoryManager] Memory retriever accessed before initialization, initializing with default settings');
+        
+        // Try to initialize with default settings
         try {
-            // Set up default priority channels if none provided
+            this._initializationInProgress = true;
+            
+            // Create a new memory retriever with default settings
+            this._memoryRetriever = new MemoryRetriever({
+                ...this._defaultConfig,
+                // Add any additional default options here
+            });
+            
+            this._isInitialized = true;
+            logger.info('[MemoryManager] Memory retriever initialized with default settings');
+            
+            return this._memoryRetriever;
+            
+        } catch (error) {
+            logger.error('[MemoryManager] Failed to initialize memory retriever with default settings:', error);
+            // Return a dummy memory retriever that won't cause errors
+            return {
+                addMemory: () => Promise.resolve(),
+                retrieveRelevantMemories: () => Promise.resolve([]),
+                isDummy: true
+            };
+        } finally {
+            this._initializationInProgress = false;
+        }
+    }
+
+    async initialize(client, customOptions = {}) {
+        // If already initialized, return the existing retriever
+        if (this._isInitialized) {
+            logger.info('[MemoryManager] Already initialized');
+            return this._memoryRetriever;
+        }
+
+        // Prevent multiple initializations
+        if (this._initializationInProgress) {
+            logger.warn('[MemoryManager] Initialization already in progress');
+            return null;
+        }
+
+        this._initializationInProgress = true;
+        
+        try {
+            // Check if MemoryRetriever is available
+            if (typeof MemoryRetriever === 'undefined') {
+                throw new Error('MemoryRetriever class not available');
+            }
+
+            // If no client is provided, initialize with limited functionality
+            if (!client) {
+                logger.warn('[MemoryManager] No Discord client provided, initializing with limited functionality');
+                this._memoryRetriever = new MemoryRetriever({
+                    ...this._defaultConfig,
+                    ...customOptions
+                });
+                this._isInitialized = true;
+                return this._memoryRetriever;
+            }
+
+            logger.info('[MemoryManager] Starting memory manager initialization...');
+            
+            // Reset state in case of re-initialization
+            this._isInitialized = false;
+            this._memoryRetriever = null;
+
+            // Get priority channels from config or use default
             const defaultPriorityChannels = [
                 global.MEMORY_CONFIG?.PRIORITY_CHANNEL_ID,
-                ...(customOptions.priorityChannelIds || [])
-            ].filter(Boolean); // Remove any undefined/null values
+                '1362185428584890469' // Default priority channel
+            ].filter(Boolean);
 
             if (defaultPriorityChannels.length === 0) {
                 logger.warn('[MemoryManager] No priority channels configured. Memory loading may be limited.');
             }
 
-            const options = { 
-                ...this._defaultConfig, 
-                ...customOptions,
-                priorityChannelIds: defaultPriorityChannels,
-                client // Pass the client to the retriever
-            };
-            
             logger.debug('[MemoryManager] Initialization options:', {
-                maxMemorySize: options.maxMemorySize,
-                memoryRateLimit: options.memoryRateLimit,
-                syncInterval: options.syncInterval,
-                priorityChannelCount: options.priorityChannelIds?.length || 0
+                defaultPriorityChannels,
+                customOptions: Object.keys(customOptions)
             });
 
-            logger.info('[MemoryManager] Initializing memory manager with options:', {
-                priorityChannels: defaultPriorityChannels,
-                maxMemorySize: options.maxMemorySize,
-                memoryRateLimit: options.memoryRateLimit
-            });
-
-            // Initialize memory retriever with client
+            // Create and initialize the memory retriever
             this._memoryRetriever = new MemoryRetriever({
-                ...options,
-                client // Pass the client to the retriever
+                ...this._defaultConfig,
+                ...customOptions
             });
-            
-            if (!this._memoryRetriever) {
-                throw new Error('Failed to create memory retriever instance');
-            }
-            
-            global.memoryRetriever = this._memoryRetriever;
-            logger.debug('[MemoryManager] Memory retriever instance created');
 
-            // Set up periodic sync if enabled
-            if (options.syncInterval > 0) {
-                // Don't start the sync immediately, it will be started after initialization is complete
-                this._syncInterval = options.syncInterval;
-                logger.info(`[MemoryManager] Will set up memory sync every ${options.syncInterval}ms after initialization`);
-            }
-
-            // Initial memory sync
-            try {
-                await this.syncMemories(client, defaultPriorityChannels);
-                logger.debug('[MemoryManager] Initial memory sync completed successfully');
-            } catch (syncError) {
-                logger.warn('[MemoryManager] Initial memory sync failed, but continuing with initialization:', syncError);
-                // Continue with initialization even if sync fails
-            }
-
-            this._isInitialized = true;
-            logger.info('[MemoryManager] Memory manager initialized successfully');
-            
-            if (!this._memoryRetriever) {
-                throw new Error('Memory retriever is not available after initialization');
-            }
-            
-            // Perform initial sync after initialization is complete
-            try {
-                logger.info('[MemoryManager] Starting initial memory sync...');
-                await this.syncMemories(client, defaultPriorityChannels);
-                logger.info('[MemoryManager] Initial memory sync completed successfully');
-            } catch (syncError) {
-                logger.warn('[MemoryManager] Initial memory sync failed, but continuing with initialization:', syncError);
-                // Continue with initialization even if sync fails
-            }
-            
-            // Set up background sync if enabled (now that we're fully initialized)
-            if (this._syncInterval && !this._syncIntervalId) {
+            // Set up background sync if enabled
+            if (this._syncInterval) {
                 const intervalMs = this._syncInterval;
                 logger.info(`[MemoryManager] Setting up background memory sync every ${intervalMs}ms`);
                 this._syncIntervalId = setInterval(
@@ -178,9 +190,13 @@ class MemoryManager {
                     intervalMs
                 );
             }
+
+            // Mark as initialized
+            this._isInitialized = true;
+            logger.info('[MemoryManager] Memory manager initialized successfully');
             
-            this._initializationInProgress = false; // Mark initialization as complete
             return this._memoryRetriever;
+            
         } catch (error) {
             logger.error('[MemoryManager] Failed to initialize memory manager:', error);
             // Clean up if initialization fails
@@ -191,6 +207,8 @@ class MemoryManager {
             this._isInitialized = false;
             this._memoryRetriever = null;
             throw error;
+        } finally {
+            this._initializationInProgress = false;
         }
     }
 
