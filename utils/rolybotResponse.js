@@ -80,24 +80,16 @@ async function generateRolybotResponse(client, message, replyContext = '') {
             formattedHistory = [];
         }
 
-        // 3. Add recent message history to context if available
-        if (Array.isArray(formattedHistory) && formattedHistory.length > 0) {
-            formattedHistory.forEach(msg => {
-                try {
-                    if (msg?.content) {
-                        contextMessages.push({
-                            role: msg.isBot ? 'assistant' : 'user',
-                            content: msg.content,
-                            name: msg.username || 'user'
-                        });
-                    }
-                } catch (msgError) {
-                    logger.error('Error processing message history:', msgError);
-                }
-            });
-        }
+        // 2. Add current user prompt FIRST
+        const currentUserMessage = { 
+            role: 'user', 
+            content: userPrompt,
+            name: message.author?.username || 'user',
+            timestamp: Date.now()
+        };
+        contextMessages.push(currentUserMessage);
 
-        // 4. Enhance context with additional metadata
+        // 3. Enhance context with additional metadata (will add recent messages AFTER the current prompt)
         try {
             await enhanceContext(contextMessages, {
                 client,
@@ -112,14 +104,7 @@ async function generateRolybotResponse(client, message, replyContext = '') {
             logger.warn('Error enhancing context, continuing with basic context:', enhanceError);
         }
 
-        // 5. Add current user prompt
-        contextMessages.push({ 
-            role: 'user', 
-            content: userPrompt,
-            name: message.author?.username || 'user'
-        });
-
-        // 6. Log the complete context for debugging
+        // 4. Log the complete context for debugging
         logger.info('\n' + '='.repeat(80));
         logger.info('RESPONSE CONTEXT DETAILS'.padStart(45));
         logger.info('='.repeat(80));
@@ -142,7 +127,7 @@ async function generateRolybotResponse(client, message, replyContext = '') {
         }
         logger.info('\n' + '='.repeat(80) + '\n');
 
-        // 7. Generate and refine response with retry logic
+        // 5. Generate and refine response with retry logic
         try {
             return await generateAndRefineResponse(openai, contextMessages, {
                 maxRetryAttempts: config.limits.maxRetryAttempts || 3,

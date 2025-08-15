@@ -59,23 +59,48 @@ async function enhanceContext(contextMessages, options) {
     } = options;
 
     try {
-        // Add recent messages (deduped)
-        const dedupeSet = new Set(contextMessages.map(m => m.content));
+        // Get recent messages (excluding the current user's message which was just added)
         const history = await loadPosts(channel, 20);
-        const recentUnique = history
-            .filter(msg => msg?.content && !dedupeSet.has(msg.content));
-            
-        // Simple token management (crude estimation)
+        
+        // Create a map of existing message contents for deduplication
+        const existingContents = new Set(contextMessages.map(m => m.content));
+        
+        // Filter and process messages
+        const recentMessages = [];
         let tokenCount = contextMessages.reduce((sum, m) => sum + (m.content?.length || 0), 0);
         const MAX_TOKENS = 6000;
         const RESERVE_TOKENS = 500;
         
-        for (const msg of recentUnique) {
-            const msgTokens = msg.content?.length || 0;
-            if (tokenCount + msgTokens > (MAX_TOKENS - RESERVE_TOKENS)) break;
-            contextMessages.push(msg);
+        // Process messages in reverse chronological order (newest first)
+        for (const msg of history) {
+            if (!msg?.content || 
+                existingContents.has(msg.content) || 
+                msg.content === userPrompt) {
+                continue; // Skip duplicates, empty messages, and the current prompt
+            }
+            
+            const msgTokens = msg.content.length;
+            if (tokenCount + msgTokens > (MAX_TOKENS - RESERVE_TOKENS)) {
+                break; // Stop if we're running out of token space
+            }
+            
+            recentMessages.unshift({ // Add to beginning to maintain chronological order
+                role: 'user', // Always use 'user' role for all messages, including from bots
+                content: msg.content,
+                name: msg.username || (msg.isBot ? 'bot' : 'user'),
+                timestamp: msg.timestamp || Date.now(),
+                isBot: msg.isBot // Keep track of bot status for reference
+            });
+            
+            existingContents.add(msg.content);
             tokenCount += msgTokens;
         }
+        
+        // Add the processed messages to the beginning of the context (after system messages)
+        const systemMessages = contextMessages.filter(m => m.role === 'system');
+        const otherMessages = contextMessages.filter(m => m.role !== 'system');
+        contextMessages = [...systemMessages, ...recentMessages, ...otherMessages];
+        
     } catch (error) {
         logger.error('Error enhancing context:', error);
     }
