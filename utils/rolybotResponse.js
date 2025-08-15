@@ -119,12 +119,22 @@ async function generateRolybotResponse(client, message, replyContext = '') {
             name: message.author?.username || 'user'
         });
 
-        // 6. Log the context for debugging (truncated to avoid log spam)
-        logger.info('Response context:', {
-            messageCount: contextMessages.length,
-            lastMessage: contextMessages[contextMessages.length - 1]?.content?.substring(0, 100) + '...',
-            hasHistory: formattedHistory.length > 0
-        });
+        // 6. Log the context for debugging
+        logger.info('============================');
+        logger.info('=== RESPONSE CONTEXT DETAILS ===');
+        logger.info(`Total context messages: ${contextMessages.length}`);
+        logger.info(`History messages: ${formattedHistory.length}`);
+        logger.info('--- Last Context Message Preview ---');
+        if (contextMessages.length > 0) {
+            const lastMessage = contextMessages[contextMessages.length - 1];
+            logger.info(`Type: ${lastMessage.role || 'unknown'}`);
+            logger.info(`Content length: ${lastMessage.content?.length || 0} characters`);
+            logger.info(`Preview: ${lastMessage.content?.substring(0, 150) || '(empty)'}${(lastMessage.content?.length || 0) > 150 ? '...' : ''}`);
+        } else {
+            logger.info('No context messages available');
+        }
+        logger.info('=== END CONTEXT DETAILS ===');
+        logger.info('============================');
 
         // 7. Generate and refine response with retry logic
         try {
