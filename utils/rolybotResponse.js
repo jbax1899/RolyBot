@@ -105,6 +105,7 @@ async function generateRolybotResponse(client, message, replyContext = '') {
         }
 
         // 4. Log the complete context for debugging
+        /*
         logger.info('\n' + '='.repeat(80));
         logger.info('RESPONSE CONTEXT DETAILS'.padStart(45));
         logger.info('='.repeat(80));
@@ -126,6 +127,7 @@ async function generateRolybotResponse(client, message, replyContext = '') {
             });
         }
         logger.info('\n' + '='.repeat(80) + '\n');
+        */
 
         // 5. Generate and refine response with retry logic
         try {
