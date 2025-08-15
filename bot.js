@@ -8,6 +8,7 @@ const { recordRolybotRequest, tooManyRolybotRequests, goAFK } = require('./utils
 const { classifyMessage } = require('./utils/messageClassifier.js');
 const { getInstance: getGameManager } = require('./utils/chess/gameManager');
 const MemoryManager = require('./utils/memoryManager');
+const { ensureMemoryInitialized, getMemoryRetriever } = require('./utils/memoryUtils');
 const memoryManager = MemoryManager.getInstance();
 
 let gameManager;
@@ -99,59 +100,23 @@ loginWithRetry().catch(err => {
 // Client ready event - initialize memories and set up message handling
 client.once(Events.ClientReady, async () => {
     try {
+        console.log(`Logged in as ${client.user.tag}!`);
+        
+        // Initialize memory manager and load initial memories
+        await ensureMemoryInitialized(client);
+        
+        // Verify memory retriever is working
+        const memoryRetriever = getMemoryRetriever();
+        if (memoryRetriever) {
+            console.log('Memory retriever initialized successfully');
+        } else {
+            console.warn('Memory retriever initialization completed but instance is not available');
+        }
+        
         // Register slash commands with Discord globally
         await registerSlashCommands(client.user.id, token);
         logger.info('Slash commands registered globally');
 
-        // Initialize memory manager with client and config
-        try {
-            logger.info('Initializing memory manager...');
-            
-            // Initialize with client and config
-            const memoryRetriever = await memoryManager.initialize(client, {
-                maxMemorySize: MEMORY_CONFIG.MAX_MEMORY_SIZE,
-                memoryRateLimit: MEMORY_CONFIG.MEMORY_RATE_LIMIT,
-                syncInterval: MEMORY_CONFIG.SYNC_INTERVAL_MS,
-                priorityChannelIds: [MEMORY_CONFIG.PRIORITY_CHANNEL_ID],
-                debug: true // Enable debug logging
-            });
-            
-            if (!memoryRetriever) {
-                throw new Error('Memory retriever not returned from initialization');
-            }
-            
-            // Verify memory retriever is properly initialized
-            if (typeof memoryRetriever.addMemory !== 'function') {
-                throw new Error('Memory retriever is not properly initialized');
-            }
-            
-            // Store memory manager and retriever globally for access in other modules
-            global.memoryManager = memoryManager;
-            global.memoryRetriever = memoryRetriever;
-            
-            logger.info('Memory manager initialized successfully');
-            
-            // Log memory manager state for debugging
-            logger.debug('Memory manager state:', {
-                isInitialized: memoryManager._isInitialized,
-                memoryCount: memoryRetriever.memoryStore?.length || 0,
-                priorityChannels: memoryRetriever.priorityChannelIds || []
-            });
-            
-        } catch (memoryError) {
-            logger.error('Failed to initialize memory manager:', {
-                error: memoryError,
-                stack: memoryError.stack
-            });
-            
-            // Ensure we don't have a partially initialized state
-            global.memoryManager = null;
-            global.memoryRetriever = null;
-            
-            // Log the error but don't throw to allow bot to continue
-            logger.warn('Continuing without memory functionality');
-        }
-        
         // Initialize game manager
         try {
             gameManager = getGameManager(client);
@@ -169,11 +134,9 @@ client.once(Events.ClientReady, async () => {
         logger.info(`Bot is online as ${client.user.tag}`);
         
     } catch (error) {
-        logger.error('Critical error during client ready initialization:', error);
-        logger.error('Error stack:', error.stack);
-        
-        // Attempt to continue with limited functionality
-        logger.warn('Bot is running with limited functionality due to initialization errors');
+        console.error('Failed to initialize bot:', error);
+        // Don't crash the bot if memory initialization fails
+        // The bot can still function with limited capabilities
     }
 });
 

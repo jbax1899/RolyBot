@@ -20,59 +20,105 @@ const memoryRetriever = memoryManager.memoryRetriever;
  * @returns {Promise<string>} The generated response
  */
 async function generateRolybotResponse(client, message, replyContext = '') {
-    const userPrompt = replyContext + message.content;
+    if (!client || !message || !message.channel) {
+        logger.error('Invalid parameters provided to generateRolybotResponse');
+        return "I'm having trouble understanding the request. Please try again.";
+    }
+
+    const userPrompt = (replyContext ? replyContext + ' ' : '') + message.content;
     const channel = message.channel;
     
     try {
-        // 1. Build initial context with system message and similar messages
-        const { contextMessages, formattedHistory } = await buildInitialContext(
-            userPrompt,
-            channel,
-            memoryRetriever,
-            openai
-        );
+        // 1. Validate memory retriever
+        if (!memoryRetriever || typeof memoryRetriever.retrieveRelevantMemories !== 'function') {
+            logger.error('Memory retriever not properly initialized');
+            return "I'm having trouble accessing my memory. Please try again in a moment.";
+        }
 
-        // 2. Add recent message history to context
-        if (formattedHistory && formattedHistory.length > 0) {
-            // Add each historical message to context
+        // 2. Build initial context with system message and similar messages
+        let contextMessages, formattedHistory;
+        try {
+            const contextResult = await buildInitialContext(
+                userPrompt,
+                channel,
+                memoryRetriever,
+                openai
+            );
+            
+            if (!contextResult) {
+                throw new Error('Failed to build initial context');
+            }
+            
+            ({ contextMessages = [], formattedHistory = [] } = contextResult);
+        } catch (contextError) {
+            logger.error('Error building initial context:', contextError);
+            contextMessages = [];
+            formattedHistory = [];
+        }
+
+        // 3. Add recent message history to context if available
+        if (Array.isArray(formattedHistory) && formattedHistory.length > 0) {
             formattedHistory.forEach(msg => {
-                contextMessages.push({
-                    role: msg.isBot ? 'assistant' : 'user',
-                    content: msg.content,
-                    name: msg.username
-                });
+                try {
+                    if (msg?.content) {
+                        contextMessages.push({
+                            role: msg.isBot ? 'assistant' : 'user',
+                            content: msg.content,
+                            name: msg.username || 'user'
+                        });
+                    }
+                } catch (msgError) {
+                    logger.error('Error processing message history:', msgError);
+                }
             });
         }
 
-        // 3. Enhance context with function tokens and other metadata
-        await enhanceContext(contextMessages, {
-            client,
-            userPrompt,
-            userId: message.author.id,
-            channel,
-            openai,
-            summaryModel: config.models.summary,
-            goAFK: (client, duration, msg, setAFK) => goAFK(client, duration, msg, setAFK)
+        // 4. Enhance context with additional metadata
+        try {
+            await enhanceContext(contextMessages, {
+                client,
+                userPrompt,
+                userId: message.author?.id,
+                channel,
+                openai,
+                summaryModel: config.models.summary,
+                goAFK: (client, duration, msg, setAFK) => goAFK(client, duration, msg, setAFK)
+            });
+        } catch (enhanceError) {
+            logger.warn('Error enhancing context, continuing with basic context:', enhanceError);
+        }
+
+        // 5. Add current user prompt
+        contextMessages.push({ 
+            role: 'user', 
+            content: userPrompt,
+            name: message.author?.username || 'user'
         });
 
-        // 4. Add user prompt last
-        contextMessages.push({ role: 'user', content: userPrompt });
-
-        // 5. Log the full context
-        logger.info('Full context:', JSON.stringify(contextMessages, null, 2));
-
-        // 6. Generate and refine response
-        return await generateAndRefineResponse(openai, contextMessages, {
-            maxRetryAttempts: config.limits.maxRetryAttempts,
-            model: config.models.primary,
-            refineModel: config.models.refine,
-            temperature: config.generation.temperature,
-            maxTokens: config.generation.maxTokens
+        // 6. Log the context for debugging (truncated to avoid log spam)
+        logger.info('Response context:', {
+            messageCount: contextMessages.length,
+            lastMessage: contextMessages[contextMessages.length - 1]?.content?.substring(0, 100) + '...',
+            hasHistory: formattedHistory.length > 0
         });
+
+        // 7. Generate and refine response with retry logic
+        try {
+            return await generateAndRefineResponse(openai, contextMessages, {
+                maxRetryAttempts: config.limits.maxRetryAttempts || 3,
+                model: config.models.primary,
+                refineModel: config.models.refine,
+                temperature: config.generation.temperature || 0.7,
+                maxTokens: config.generation.maxTokens || 1000
+            });
+        } catch (genError) {
+            logger.error('Error generating response:', genError);
+            return "I'm having trouble formulating a response right now. Could you rephrase your request?";
+        }
 
     } catch (error) {
-        console.error('Error generating response:', error);
-        return "I'm sorry, I encountered an error while generating a response. Please try again.";
+        logger.error('Critical error in generateRolybotResponse:', error);
+        return "I've encountered an unexpected error. The issue has been logged. Please try again.";
     }
 }
 

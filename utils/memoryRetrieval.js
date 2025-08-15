@@ -870,4 +870,10 @@ class MemoryRetriever {
     }
 }
 
-module.exports = MemoryRetriever;
+module.exports = {
+    MemoryRetriever,
+    retrieveRelevantMemories: MemoryRetriever.prototype.retrieveRelevantMemories,
+    addMemory: MemoryRetriever.prototype.addMemory,
+    clearMemories: MemoryRetriever.prototype.clearMemories,
+    initializeMemoriesFromHistory: MemoryRetriever.prototype.initializeMemoriesFromHistory
+};

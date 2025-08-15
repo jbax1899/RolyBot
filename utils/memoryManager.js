@@ -33,6 +33,7 @@ class MemoryManager {
 
         this._memoryRetriever = null;
         this._isInitialized = false;
+        this._initializationInProgress = false;
         // Initialize with default values from global config
         this._defaultConfig = {
             priorityChannelIds: global.MEMORY_CONFIG?.PRIORITY_CHANNEL_ID ? [global.MEMORY_CONFIG.PRIORITY_CHANNEL_ID] : [],
@@ -182,12 +183,32 @@ class MemoryManager {
         }
     }
 
+    /**
+     * Get the memory retriever instance
+     * @returns {Object} Memory retriever instance
+     */
     get memoryRetriever() {
         if (!this._memoryRetriever) {
             logger.warn('[MemoryManager] Memory retriever accessed before initialization');
-            return this.initialize();
+            throw new Error('Memory retriever not initialized. Call initialize() first.');
         }
         return this._memoryRetriever;
+    }
+
+    /**
+     * Check if the memory manager is initialized
+     * @returns {boolean} True if initialized
+     */
+    get isInitialized() {
+        return this._isInitialized && this._memoryRetriever !== null;
+    }
+
+    /**
+     * Get the list of priority channel IDs
+     * @returns {string[]} Array of channel IDs
+     */
+    get priorityChannelIds() {
+        return this._defaultConfig.priorityChannelIds || [];
     }
 
     // Configuration management methods
