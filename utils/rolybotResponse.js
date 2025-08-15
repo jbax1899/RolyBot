@@ -6,11 +6,29 @@ const { generateAndRefineResponse } = require('./responseUtils');
 const config = require('../config/responseConfig');
 const logger = require('./logger');
 
-// Get memory manager instance
-const memoryManager = require('./memoryManager').getInstance();
+// Import memory utilities
+const { getMemoryRetriever } = require('./memoryUtils');
 
-// Get memory retriever from the memory manager instance
-const memoryRetriever = memoryManager.memoryRetriever;
+// Lazy initialize memory retriever
+let _memoryRetriever = null;
+
+/**
+ * Get the memory retriever instance with lazy initialization
+ * @returns {Object|null} Memory retriever instance or null if not available
+ */
+function getMemoryRetrieverInstance() {
+    if (!_memoryRetriever) {
+        try {
+            _memoryRetriever = getMemoryRetriever();
+            if (!_memoryRetriever) {
+                logger.warn('Memory retriever not available');
+            }
+        } catch (error) {
+            logger.error('Failed to get memory retriever:', error);
+        }
+    }
+    return _memoryRetriever;
+}
 
 /**
  * Generates a response to a user message with context and refinement
@@ -23,6 +41,12 @@ async function generateRolybotResponse(client, message, replyContext = '') {
     if (!client || !message || !message.channel) {
         logger.error('Invalid parameters provided to generateRolybotResponse');
         return "I'm having trouble understanding the request. Please try again.";
+    }
+    
+    // Get memory retriever instance
+    const memoryRetriever = getMemoryRetrieverInstance();
+    if (!memoryRetriever) {
+        logger.warn('Memory retriever not available, continuing without memory functionality');
     }
 
     const userPrompt = (replyContext ? replyContext + ' ' : '') + message.content;

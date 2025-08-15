@@ -102,15 +102,21 @@ client.once(Events.ClientReady, async () => {
     try {
         console.log(`Logged in as ${client.user.tag}!`);
         
-        // Initialize memory manager and load initial memories
-        await ensureMemoryInitialized(client);
-        
-        // Verify memory retriever is working
-        const memoryRetriever = getMemoryRetriever();
-        if (memoryRetriever) {
-            console.log('Memory retriever initialized successfully');
-        } else {
-            console.warn('Memory retriever initialization completed but instance is not available');
+        try {
+            // Initialize memory manager and load initial memories
+            await ensureMemoryInitialized(client);
+            
+            // Verify memory retriever is working
+            const memoryRetriever = getMemoryRetriever();
+            if (memoryRetriever) {
+                console.log('Memory retriever initialized successfully');
+            } else {
+                console.warn('Memory retriever initialization completed but instance is not available');
+            }
+        } catch (memoryError) {
+            console.error('Error initializing memory system:', memoryError);
+            // Continue without memory functionality
+            console.warn('Continuing without memory functionality');
         }
         
         // Register slash commands with Discord globally

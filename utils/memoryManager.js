@@ -1,25 +1,37 @@
+const { MemoryRetriever } = require('./memoryRetrieval');
 const logger = require('./logger');
-const MemoryRetriever = require('./memoryRetrieval');
-const { Events } = require('discord.js');
+
+// Default configuration
+const DEFAULT_CONFIG = {
+    priorityChannelIds: [],
+    maxMemorySize: 500,
+    memoryRateLimit: 60,
+    memoryRateLimitWindow: 1000, // ms
+    preprocessingConfig: {
+        tokenLimit: 500,
+        embeddingDimension: 768,
+        similarityThreshold: 0.7
+    }
+};
 
 class MemoryManager {
-    // Private static instance variable
-    static #instance = null;
-    // Lock for thread safety during initialization
-    static #initializing = false;
-
     /**
      * Get the singleton instance of MemoryManager
      * @returns {MemoryManager} The singleton instance
      */
     static getInstance() {
-        if (!MemoryManager.#instance) {
-            MemoryManager.#initializing = true;
-            MemoryManager.#instance = new MemoryManager();
-            MemoryManager.#initializing = false;
+        if (!this._instance) {
+            this._initializing = true;
+            this._instance = new MemoryManager();
+            this._initializing = false;
         }
-        return MemoryManager.#instance;
+        return this._instance;
     }
+
+    // Private static instance variable
+    static _instance = null;
+    // Lock for thread safety during initialization
+    static _initializing = false;
 
     /**
      * Private constructor to enforce singleton pattern
@@ -27,27 +39,26 @@ class MemoryManager {
      */
     constructor() {
         // Prevent direct construction calls with new operator
-        if (MemoryManager.#instance && !MemoryManager.#initializing) {
+        if (MemoryManager._instance && !MemoryManager._initializing) {
             throw new Error('Use MemoryManager.getInstance() instead of new operator');
         }
 
         this._memoryRetriever = null;
         this._isInitialized = false;
         this._initializationInProgress = false;
-        // Initialize with default values from global config
+        
+        // Initialize with default values from global config or use defaults
         this._defaultConfig = {
-            priorityChannelIds: global.MEMORY_CONFIG?.PRIORITY_CHANNEL_ID ? [global.MEMORY_CONFIG.PRIORITY_CHANNEL_ID] : [],
-            maxMemorySize: global.MEMORY_CONFIG?.MAX_MEMORY_SIZE || 500,
-            memoryRateLimit: global.MEMORY_CONFIG?.MEMORY_RATE_LIMIT || 60,
-            memoryRateLimitWindow: 1000, //ms
-            preprocessingConfig: {
-                tokenLimit: 500,
-                embeddingDimension: 768,
-                similarityThreshold: 0.7
-            }
+            ...DEFAULT_CONFIG,
+            ...(global.MEMORY_CONFIG ? {
+                priorityChannelIds: global.MEMORY_CONFIG.PRIORITY_CHANNEL_ID ? 
+                    [global.MEMORY_CONFIG.PRIORITY_CHANNEL_ID] : [],
+                maxMemorySize: global.MEMORY_CONFIG.MAX_MEMORY_SIZE,
+                memoryRateLimit: global.MEMORY_CONFIG.MEMORY_RATE_LIMIT
+            } : {})
         };
 
-        MemoryManager.instance = this;
+        MemoryManager._instance = this;
     }
 
     /**
@@ -419,8 +430,8 @@ class MemoryManager {
     }
 }
 
-// Export the class for direct instantiation if needed
+// Export the class with static getInstance method
 module.exports = MemoryManager;
 
-// Also export the singleton instance for convenience
+// Also export a singleton instance for convenience
 module.exports.instance = MemoryManager.getInstance();

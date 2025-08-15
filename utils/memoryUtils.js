@@ -1,9 +1,23 @@
 const logger = require('./logger');
-const MemoryManager = require('./memoryManager');
 
 // Memory initialization state
 let isMemoryInitialized = false;
 let initializationPromise = null;
+
+// Lazy load the MemoryManager to avoid circular dependencies
+let _memoryManager = null;
+
+/**
+ * Get the memory manager instance with lazy loading
+ * @returns {Object} MemoryManager instance
+ */
+function getMemoryManager() {
+    if (!_memoryManager) {
+        const MemoryManager = require('./memoryManager');
+        _memoryManager = MemoryManager.instance || MemoryManager.getInstance();
+    }
+    return _memoryManager;
+}
 
 /**
  * Ensures memory is properly initialized before proceeding
@@ -22,7 +36,7 @@ async function ensureMemoryInitialized(client) {
 
     initializationPromise = (async () => {
         try {
-            const memoryManager = MemoryManager.getInstance();
+            const memoryManager = getMemoryManager();
             
             // Initialize with default settings if not already initialized
             if (!memoryManager.isInitialized) {
@@ -57,13 +71,14 @@ async function ensureMemoryInitialized(client) {
 
 /**
  * Safely retrieves the memory retriever instance
- * @returns {Object} Memory retriever instance
+ * @returns {Object|null} Memory retriever instance or null if not available
  */
 function getMemoryRetriever() {
     try {
-        const memoryManager = MemoryManager.getInstance();
-        if (!memoryManager.isInitialized) {
-            throw new Error('Memory manager not initialized');
+        const memoryManager = getMemoryManager();
+        if (!memoryManager || !memoryManager.isInitialized) {
+            logger.warn('Memory manager not initialized');
+            return null;
         }
         return memoryManager.memoryRetriever;
     } catch (error) {
